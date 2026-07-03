@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Ocado Semi Skimmed Milk 2.272L",
+    "ocado_id": "13175011",
+    "aliases": ["milk", "semi skimmed"]
+  },
+  {
+    "name": "Hovis Soft White Medium Bread 800g",
+    "ocado_id": "23476011",
+    "aliases": ["bread", "white bread"]
+  },
+  {
+    "name": "Ocado British Free Range Eggs Large x6",
+    "ocado_id": "65448011",
+    "aliases": ["eggs"]
+  },
+  {
+    "name": "Lurpak Slightly Salted Spreadable 500g",
+    "ocado_id": "44855011",
+    "aliases": ["butter", "lurpak"]
+  },
+  {
+    "name": "Fairtrade Bananas x5",
+    "ocado_id": "78945011",
+    "aliases": ["bananas", "nanas"]
+  }
+]
