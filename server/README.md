@@ -24,7 +24,7 @@ Environment variables (or `.env` in `server/` or the repo root), all prefixed
 | Variable            | Default                      | Notes                                    |
 | ------------------- | ---------------------------- | ---------------------------------------- |
 | `DB_PATH`           | `weekly_shop.sqlite3`        | SQLite file                              |
-| `RECOGNIZER`        | `auto`                       | `auto`, `stub`, `claude`, or `openai`; `auto` prefers claude, then openai, by configured key |
+| `RECOGNIZER`        | `auto`                       | `auto`, `stub`, `claude`, or `openai`; `auto` prefers openai, then claude, by configured key |
 | `STUB_TEXT`         | `milk`                       | what the stub "recognises"               |
 | `ANTHROPIC_API_KEY` | —                            | required for `claude`; the unprefixed name `ANTHROPIC_API_KEY` also works |
 | `ANTHROPIC_MODEL`   | `claude-haiku-4-5-20251001`  |                                          |

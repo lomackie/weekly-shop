@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # "stub" needs no credentials and always recognises `stub_text`;
     # "claude" / "openai" send the rendered ink image to that provider's API;
-    # "auto" picks claude, then openai, by whichever API key is configured,
+    # "auto" picks openai, then claude, by whichever API key is configured,
     # falling back to stub.
     recognizer: str = "auto"
     stub_text: str = "milk"

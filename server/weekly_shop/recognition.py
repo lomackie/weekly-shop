@@ -151,10 +151,10 @@ class OpenAIRecognizer:
 def build_recognizer(settings: Settings) -> Recognizer:
     kind = settings.recognizer
     if kind == "auto":
-        if settings.anthropic_api_key:
-            kind = "claude"
-        elif settings.openai_api_key:
+        if settings.openai_api_key:
             kind = "openai"
+        elif settings.anthropic_api_key:
+            kind = "claude"
         else:
             kind = "stub"
         log.info("recognizer=auto resolved to %s", kind)
