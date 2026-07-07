@@ -45,5 +45,9 @@ dependencies {
 
     // Low-latency e-ink pen rendering (see InkCanvasView); resolved from the
     // BOOX maven repo in settings.gradle.kts.
-    implementation("com.onyx.android.sdk:onyxsdk-pen:1.4.11")
+    implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.4")
+
+    // The Pen SDK's raw input reader uses hidden platform APIs, blocked from
+    // Android 11 unless exempted at startup (see App.onCreate).
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 }

@@ -53,7 +53,9 @@ class InkCanvasView @JvmOverloads constructor(
     private var touchHelper: TouchHelper? = null
     private var rawDrawingWanted = false
 
-    /** True once the SDK has delivered any raw callback: the pen pipeline works. */
+    /** True once the SDK has delivered any raw callback: the pen pipeline works.
+     *  Written from the SDK's reader thread, read on the UI thread. */
+    @Volatile
     private var rawCallbackSeen = false
 
     /** Set when the pen produced MotionEvents but never raw callbacks: the SDK
@@ -76,6 +78,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         override fun onRawDrawingTouchPointMoveReceived(point: TouchPoint) {
+            rawCallbackSeen = true
             pending?.add(Point(point.x, point.y, point.timestamp))
         }
 
@@ -138,6 +141,8 @@ class InkCanvasView @JvmOverloads constructor(
                     Log.d(TAG, "TouchHelper active, limit ${width}x$height")
                     runCatching { it.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL) }
                     setRawDrawing(true)
+                    // Some firmware defaults to not rendering raw ink; be explicit.
+                    runCatching { it.setRawDrawingRenderEnabled(true) }
                 }.onFailure {
                     Log.i(TAG, "Pen SDK unavailable, using fallback rendering: $it")
                 }
@@ -193,14 +198,15 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun handleDrawTouch(event: MotionEvent): Boolean {
         // The raw layer owns the pen while it is on; letting events through
-        // here as well would record every stroke twice. But if the raw
-        // pipeline has never delivered a callback, it isn't actually reading
-        // the pen — abandon it and draw through the normal path.
+        // here as well would record every stroke twice. But its callbacks
+        // come from a background reader that can trail the first MotionEvents
+        // (or, on broken firmware pairings, never start), so until it has
+        // proven itself shadow the stroke here: if a whole stroke completes
+        // with no raw callback the layer is inert — keep the shadow copy and
+        // fall back to standard rendering for good.
         if (rawDrawingWanted && touchHelper != null) {
-            if (rawCallbackSeen) return true
-            Log.w(TAG, "Raw pen layer inert; falling back to standard rendering")
-            rawAbandoned = true
-            setRawDrawing(false)
+            if (rawCallbackSeen) shadowStroke = null else handleShadowStroke(event)
+            return true
         }
 
         when (event.actionMasked) {
@@ -227,6 +233,44 @@ class InkCanvasView @JvmOverloads constructor(
         }
         invalidate()
         return true
+    }
+
+    /** Stroke recorded from MotionEvents while the raw layer is unproven. */
+    private var shadowStroke: MutableList<Point>? = null
+
+    private fun handleShadowStroke(event: MotionEvent) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                shadowStroke = mutableListOf(Point(event.x, event.y, event.eventTime))
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val stroke = shadowStroke ?: return
+                for (i in 0 until event.historySize) {
+                    stroke.add(
+                        Point(
+                            event.getHistoricalX(i),
+                            event.getHistoricalY(i),
+                            event.getHistoricalEventTime(i),
+                        ),
+                    )
+                }
+                stroke.add(Point(event.x, event.y, event.eventTime))
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val stroke = shadowStroke
+                shadowStroke = null
+                // A raw callback arriving any time during the stroke proves
+                // the pipeline; the shadow copy is then a duplicate — drop it.
+                if (rawCallbackSeen || stroke == null || stroke.size < 2) return
+                Log.w(TAG, "Raw pen layer inert; falling back to standard rendering")
+                rawAbandoned = true
+                setRawDrawing(false)
+                strokes.add(stroke)
+                drawStrokeToBitmap(stroke)
+                invalidate()
+                onStrokesChanged?.invoke()
+            }
+        }
     }
 
     private fun appendPoint(stroke: MutableList<Point>, p: Point) {

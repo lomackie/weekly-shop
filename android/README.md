@@ -33,12 +33,19 @@ which replies with the matched item. Rub a stroke with a finger to erase it.
 
 ## Known issues / next steps
 
-- **Pen latency**: on the Note Air 2 Plus the SDK's raw drawing layer
-  currently never delivers callbacks (`onBeginRawDrawing` never fires even
-  though `TouchHelper` opens cleanly), so writing uses the fallback path —
-  noticeably more delayed than the native notebook app. Needs investigation:
-  SDK version bump, `setRawDrawingRenderEnabled`, firmware pairing, or the
-  `EpdController` fast-refresh modes are the likely angles.
+- **Pen latency** (fix applied, needs on-device verification): the raw layer
+  opening cleanly but never delivering callbacks matched a known failure mode
+  on recent firmware. Three changes, mirroring what the Saber app's BOOX
+  plugin does: `HiddenApiBypass.addHiddenApiExemptions("")` on Android 11+
+  plus `RxManager.Builder.initAppContext(...)` at startup (`App.kt` — both
+  are required before the SDK's raw input reader will run), and an SDK bump
+  1.4.11 → 1.5.4. The inert-layer fallback now also waits until a full stroke
+  completes with no raw callback before abandoning the raw path (the
+  callbacks arrive from a background thread, so judging at pen-down could
+  falsely abandon a working pipeline — and the probe stroke is kept either
+  way). Verify on the tablet: `adb logcat -s InkCanvasView` should show
+  `onBeginRawDrawing` on the first stroke, and ink should feel as immediate
+  as the native notebook app.
 - For wall duty: disable the screensaver/auto-sleep in BOOX settings, exempt
   the app from their app-freezing battery settings, and consider setting it
   as the launcher (kiosk mode).
