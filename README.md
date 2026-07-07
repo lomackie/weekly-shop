@@ -28,8 +28,8 @@ collected into a basket.
 2. Server recognises the text, fuzzy-matches it against the item/alias table,
    and appends a basket entry.
 3. The page is the list: basketed ink stays put and gains a ✓, and the
-   basket badge ticks up. Rubbing an item out (double-tap, then rub with a
-   finger) removes it from the basket as well. Ambiguous matches open a
+   basket badge ticks up. Rubbing an item out with a finger removes it from
+   the basket as well. Ambiguous matches open a
    picker whose choice is learned as an alias. Ink the server can't parse is
    framed by a dashed highlight (from the server's `unparsed_regions`
    coordinates) — rub it out and rewrite.

@@ -21,10 +21,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Full-screen writing surface: the stylus writes, a double-tap-then-rub with
- * a finger erases whole strokes (plain touches do nothing — erasing now has
- * consequences, and this is a wall tablet). Strokes are captured as (x, y, t)
- * points for the server and drawn locally for feedback.
+ * Full-screen writing surface: the stylus writes, a finger rub erases whole
+ * strokes. Strokes are captured as (x, y, t) points for the server and drawn
+ * locally for feedback.
  *
  * There is no submit button: the activity watches [onStrokesChanged] and
  * auto-sends after a writing pause. Each send takes per-page snapshots via
@@ -513,68 +512,23 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    // Erasing deletes basket entries now, and stray touches happen on a wall
-    // tablet — so a finger only erases on a double-tap-then-rub: a quick tap,
-    // then touch down again nearby and rub. Plain touches do nothing.
-    private var lastTapUpTime = 0L
-    private var lastTapX = 0f
-    private var lastTapY = 0f
-    private var fingerDownTime = 0L
-    private var fingerDownX = 0f
-    private var fingerDownY = 0f
-    private var fingerMoved = false
-    private var eraseArmed = false
-
     private fun handleEraseTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                fingerDownTime = event.eventTime
-                fingerDownX = event.x
-                fingerDownY = event.y
-                fingerMoved = false
-                val dx = event.x - lastTapX
-                val dy = event.y - lastTapY
-                eraseArmed = event.eventTime - lastTapUpTime <= DOUBLE_TAP_MS &&
-                    dx * dx + dy * dy <= DOUBLE_TAP_SLOP * DOUBLE_TAP_SLOP
-                if (eraseArmed) {
-                    // Repaints are frozen while the raw pen layer is on; lift
-                    // it for the gesture so removals show live.
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                // Repaints are frozen while the raw pen layer is on; lift it
+                // for the duration of the gesture so removals show live.
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     runCatching { touchHelper?.setRawDrawingEnabled(false) }
-                    eraseNear(event.x, event.y)
-                    invalidate()
                 }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (!fingerMoved) {
-                    val dx = event.x - fingerDownX
-                    val dy = event.y - fingerDownY
-                    fingerMoved = dx * dx + dy * dy > DOUBLE_TAP_SLOP * DOUBLE_TAP_SLOP
+                for (i in 0 until event.historySize) {
+                    eraseNear(event.getHistoricalX(i), event.getHistoricalY(i))
                 }
-                if (eraseArmed) {
-                    for (i in 0 until event.historySize) {
-                        eraseNear(event.getHistoricalX(i), event.getHistoricalY(i))
-                    }
-                    eraseNear(event.x, event.y)
-                    invalidate()
-                }
+                eraseNear(event.x, event.y)
+                invalidate()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (eraseArmed) {
-                    eraseArmed = false
-                    lastTapUpTime = 0L
-                    if (rawDrawingWanted) {
-                        runCatching { touchHelper?.setRawDrawingEnabled(true) }
-                    }
-                } else if (!fingerMoved &&
-                    event.eventTime - fingerDownTime <= TAP_MS &&
-                    event.actionMasked == MotionEvent.ACTION_UP
-                ) {
-                    // A clean quick tap: candidate first half of a double tap.
-                    lastTapUpTime = event.eventTime
-                    lastTapX = fingerDownX
-                    lastTapY = fingerDownY
-                } else {
-                    lastTapUpTime = 0L
+                if (rawDrawingWanted) {
+                    runCatching { touchHelper?.setRawDrawingEnabled(true) }
                 }
             }
             else -> return false
@@ -655,11 +609,6 @@ class InkCanvasView @JvmOverloads constructor(
 
         // Finger-sized: erasing should be forgiving, not surgical.
         private const val ERASE_RADIUS = 40f
-
-        // Double-tap-then-rub gating for the finger eraser.
-        private const val TAP_MS = 300L
-        private const val DOUBLE_TAP_MS = 400L
-        private const val DOUBLE_TAP_SLOP = 120f
 
         private const val HIGHLIGHT_PADDING = 18f
         private const val HIGHLIGHT_RADIUS = 14f

@@ -3,9 +3,9 @@
 Kotlin app for the Onyx BOOX Note Air 2 Plus: a full-screen writing canvas.
 Write an item with the pen and after a 2 s pause the strokes go to the server
 automatically — no submit button. The page IS the list: basketed ink stays
-put and gains a small ✓; rubbing an item out (double-tap, then rub with a
-finger) deletes it from the basket too. Unparsed ink sits inside a dashed
-highlight until rubbed out.
+put and gains a small ✓; rubbing an item out with a finger deletes it from
+the basket too. Unparsed ink sits inside a dashed highlight until rubbed
+out.
 
 ## Setup
 
@@ -23,10 +23,10 @@ highlight until rubbed out.
 
 ## Current state
 
-- **Interaction**: the stylus writes; a finger erases whole strokes only on a
-  **double-tap-then-rub** (plain touches do nothing — it hangs on a wall, and
-  erasing now has consequences). No mode toggle, no submit button, no eraser
-  button. Ink auto-sends after a 2 s pen-idle pause (`MainActivity.IDLE_MS`);
+- **Interaction**: the stylus writes; a finger rub erases whole strokes (a
+  double-tap-then-rub gate was tried and reverted — the plain rub is the
+  point). No mode toggle, no submit button, no eraser button. Ink auto-sends
+  after a 2 s pen-idle pause (`MainActivity.IDLE_MS`);
   offline sends are retried every 8 s with the ink kept on the page. One
   icon: the **basket** (with count badge) opens the basket panel. A small
   status line shows the last event (`✓ item`, `✕ text`, `⚠` offline).
