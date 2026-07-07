@@ -21,16 +21,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Full-screen writing surface: the stylus writes, a finger erases whole
- * strokes. Strokes are captured as (x, y, t) points for the server and drawn
- * locally for feedback.
+ * Full-screen writing surface: the stylus writes, a double-tap-then-rub with
+ * a finger erases whole strokes (plain touches do nothing — erasing now has
+ * consequences, and this is a wall tablet). Strokes are captured as (x, y, t)
+ * points for the server and drawn locally for feedback.
  *
  * There is no submit button: the activity watches [onStrokesChanged] and
  * auto-sends after a writing pause. Each send takes per-page snapshots via
  * [beginPendingBatches]; the activity then settles each batch with
- * [commitPending] (matched: the ink vanishes), [failPending] (unparsed: the
- * ink stays and the region the server flagged is highlighted), or
- * [releasePending] (network error: the ink goes back into the next send).
+ * [linkPending] (basketed: the ink STAYS, gains a ✓, and is tied to its
+ * basket entry — the page is the list), [failPending] (unparsed: the region
+ * the server flagged is highlighted), or [releasePending] (network error:
+ * the ink goes back into the next send).
+ *
+ * Erasing the last stroke of a linked item fires [onEntryErased] so the
+ * activity can delete the basket entry; deleting from the basket panel calls
+ * [removeEntryInk] for the reverse direction.
  *
  * Ink lives on pages. [goLeft]/[goRight] flip between them; flipping right
  * past the last page creates a new one, but only when the current page has
@@ -50,7 +56,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     data class Point(val x: Float, val y: Float, val t: Long)
 
-    private enum class State { FRESH, PENDING, FAILED }
+    private enum class State { FRESH, PENDING, FAILED, MATCHED }
 
     /** Identity matters (strokes live in batches and highlights) — keep this
      *  a plain class so equality stays referential. */
@@ -68,6 +74,11 @@ class InkCanvasView @JvmOverloads constructor(
     class PendingBatch internal constructor(val id: Int, val strokes: JSONArray)
 
     private class PageBatch(val page: Page, val strokes: List<Stroke>)
+
+    /** Ink that is in the basket: erase it and the entry goes too. */
+    private class LinkedEntry(val entryId: Int, val page: Page, val strokes: List<Stroke>)
+
+    private val linkedEntries = mutableListOf<LinkedEntry>()
 
     private val pages = mutableListOf(Page())
     private var pageIndex = 0
@@ -97,6 +108,12 @@ class InkCanvasView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(16f, 12f), 0f)
     }
 
+    private val checkPaint = Paint().apply {
+        isAntiAlias = true
+        color = 0xFF777777.toInt()
+        textSize = 34f
+    }
+
     private var touchHelper: TouchHelper? = null
     private var rawDrawingWanted = false
     private var excludeRects: List<Rect> = emptyList()
@@ -117,6 +134,9 @@ class InkCanvasView @JvmOverloads constructor(
     var onStrokesChanged: (() -> Unit)? = null
     var onPageChanged: (() -> Unit)? = null
 
+    /** The last stroke of a basketed item was rubbed out: delete its entry. */
+    var onEntryErased: ((Int) -> Unit)? = null
+
     // ------------------------------------------------------------- batches
 
     /** Snapshot all fresh ink for sending, one batch per page so a send never
@@ -134,15 +154,47 @@ class InkCanvasView @JvmOverloads constructor(
         return batches
     }
 
-    /** The batch became a basket entry: its ink disappears from its page. */
-    fun commitPending(batchId: Int) {
+    /** The batch became a basket entry: the ink stays on the page (the page
+     *  IS the list), gains a ✓, and is tied to the entry so erasing it later
+     *  removes the entry too. */
+    fun linkPending(batchId: Int, entryId: Int?) {
         val batch = pendingBatches.remove(batchId) ?: return
-        val gone = batch.strokes.toHashSet()
-        batch.page.strokes.removeAll { it in gone }
-        pruneHighlights(batch.page)
-        collapseIfEmpty(batch.page)
+        val alive = batch.strokes.filter { it in batch.page.strokes }
+        alive.forEach { it.state = State.MATCHED }
+        if (entryId != null) {
+            if (alive.isEmpty()) {
+                // Erased while the request was in flight: the writer changed
+                // their mind, so the just-created entry must go.
+                post { onEntryErased?.invoke(entryId) }
+            } else {
+                linkedEntries.add(LinkedEntry(entryId, batch.page, alive))
+            }
+        }
+        refreshFromBitmap()
+    }
+
+    /** A basket entry was deleted from the panel: take its ink off the page. */
+    fun removeEntryInk(entryId: Int) {
+        val link = linkedEntries.firstOrNull { it.entryId == entryId } ?: return
+        linkedEntries.remove(link)
+        val gone = link.strokes.toHashSet()
+        link.page.strokes.removeAll { it in gone }
+        pruneHighlights(link.page)
+        collapseIfEmpty(link.page)
         rebuildBitmap()
         refreshFromBitmap()
+    }
+
+    /** Fire [onEntryErased] for links whose ink has been fully rubbed out. */
+    private fun pruneLinkedEntries() {
+        val erased = linkedEntries.filter { link ->
+            link.strokes.none { it in link.page.strokes }
+        }
+        if (erased.isEmpty()) return
+        linkedEntries.removeAll(erased)
+        for (link in erased) {
+            post { onEntryErased?.invoke(link.entryId) }
+        }
     }
 
     /** The server could not parse the batch: keep the ink and frame the
@@ -461,23 +513,68 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
+    // Erasing deletes basket entries now, and stray touches happen on a wall
+    // tablet — so a finger only erases on a double-tap-then-rub: a quick tap,
+    // then touch down again nearby and rub. Plain touches do nothing.
+    private var lastTapUpTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var fingerDownTime = 0L
+    private var fingerDownX = 0f
+    private var fingerDownY = 0f
+    private var fingerMoved = false
+    private var eraseArmed = false
+
     private fun handleEraseTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                // Repaints are frozen while the raw pen layer is on; lift it
-                // for the duration of the gesture so removals show live.
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            MotionEvent.ACTION_DOWN -> {
+                fingerDownTime = event.eventTime
+                fingerDownX = event.x
+                fingerDownY = event.y
+                fingerMoved = false
+                val dx = event.x - lastTapX
+                val dy = event.y - lastTapY
+                eraseArmed = event.eventTime - lastTapUpTime <= DOUBLE_TAP_MS &&
+                    dx * dx + dy * dy <= DOUBLE_TAP_SLOP * DOUBLE_TAP_SLOP
+                if (eraseArmed) {
+                    // Repaints are frozen while the raw pen layer is on; lift
+                    // it for the gesture so removals show live.
                     runCatching { touchHelper?.setRawDrawingEnabled(false) }
+                    eraseNear(event.x, event.y)
+                    invalidate()
                 }
-                for (i in 0 until event.historySize) {
-                    eraseNear(event.getHistoricalX(i), event.getHistoricalY(i))
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!fingerMoved) {
+                    val dx = event.x - fingerDownX
+                    val dy = event.y - fingerDownY
+                    fingerMoved = dx * dx + dy * dy > DOUBLE_TAP_SLOP * DOUBLE_TAP_SLOP
                 }
-                eraseNear(event.x, event.y)
-                invalidate()
+                if (eraseArmed) {
+                    for (i in 0 until event.historySize) {
+                        eraseNear(event.getHistoricalX(i), event.getHistoricalY(i))
+                    }
+                    eraseNear(event.x, event.y)
+                    invalidate()
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (rawDrawingWanted) {
-                    runCatching { touchHelper?.setRawDrawingEnabled(true) }
+                if (eraseArmed) {
+                    eraseArmed = false
+                    lastTapUpTime = 0L
+                    if (rawDrawingWanted) {
+                        runCatching { touchHelper?.setRawDrawingEnabled(true) }
+                    }
+                } else if (!fingerMoved &&
+                    event.eventTime - fingerDownTime <= TAP_MS &&
+                    event.actionMasked == MotionEvent.ACTION_UP
+                ) {
+                    // A clean quick tap: candidate first half of a double tap.
+                    lastTapUpTime = event.eventTime
+                    lastTapX = fingerDownX
+                    lastTapY = fingerDownY
+                } else {
+                    lastTapUpTime = 0L
                 }
             }
             else -> return false
@@ -497,6 +594,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         if (removed) {
             pruneHighlights(pages[pageIndex])
+            pruneLinkedEntries()
             rebuildBitmap()
             onStrokesChanged?.invoke()
         }
@@ -508,16 +606,15 @@ class InkCanvasView @JvmOverloads constructor(
         for (h in highlights) {
             canvas.drawRoundRect(h.rect, HIGHLIGHT_RADIUS, HIGHLIGHT_RADIUS, highlightPaint)
         }
-    }
-
-    /** Wipe the current page. In-flight batches settle harmlessly: their
-     *  strokes are gone, so commit and fail find nothing to act on. */
-    fun clear() {
-        strokes.clear()
-        highlights.clear()
-        rebuildBitmap()
-        refreshFromBitmap()
-        onStrokesChanged?.invoke()
+        // A quiet ✓ beside each item that made it into the basket.
+        val page = pages[pageIndex]
+        for (link in linkedEntries) {
+            if (link.page !== page) continue
+            val alive = link.strokes.filter { it in page.strokes }
+            if (alive.isEmpty()) continue
+            val b = boundsOf(alive)
+            canvas.drawText("✓", b.right + 14f, b.bottom, checkPaint)
+        }
     }
 
     private fun rebuildBitmap() {
@@ -558,6 +655,11 @@ class InkCanvasView @JvmOverloads constructor(
 
         // Finger-sized: erasing should be forgiving, not surgical.
         private const val ERASE_RADIUS = 40f
+
+        // Double-tap-then-rub gating for the finger eraser.
+        private const val TAP_MS = 300L
+        private const val DOUBLE_TAP_MS = 400L
+        private const val DOUBLE_TAP_SLOP = 120f
 
         private const val HIGHLIGHT_PADDING = 18f
         private const val HIGHLIGHT_RADIUS = 14f

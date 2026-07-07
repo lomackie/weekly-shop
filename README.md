@@ -27,14 +27,16 @@ collected into a basket.
    to `POST /ink` automatically.
 2. Server recognises the text, fuzzy-matches it against the item/alias table,
    and appends a basket entry.
-3. Matched ink vanishes from the page (that's the confirmation) and the
-   basket badge ticks up. Ambiguous matches open a picker whose choice is
-   learned as an alias. Ink the server can't parse stays on the page inside a
-   dashed highlight (from the server's `unparsed_regions` coordinates) —
-   rub it out and rewrite.
-4. The basket icon opens the list for review and pruning. Edge chevrons flip
-   between pages; a new page appears by flipping right off a written-on page,
-   and empty pages collapse away.
+3. The page is the list: basketed ink stays put and gains a ✓, and the
+   basket badge ticks up. Rubbing an item out (double-tap, then rub with a
+   finger) removes it from the basket as well. Ambiguous matches open a
+   picker whose choice is learned as an alias. Ink the server can't parse is
+   framed by a dashed highlight (from the server's `unparsed_regions`
+   coordinates) — rub it out and rewrite.
+4. The basket icon opens the list for review; deleting there also lifts the
+   item's ink off the page. Edge chevrons flip between pages; a new page
+   appears by flipping right off a written-on page, and empty pages collapse
+   away.
 
 ## Deployment
 

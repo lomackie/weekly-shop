@@ -23,7 +23,6 @@
     <string name="cd_basket">Basket</string>
     <string name="cd_page_left">Previous page</string>
     <string name="cd_page_right">Next page</string>
-    <string name="cd_clear">Clear page</string>
     <string name="cd_close">Close</string>
     <string name="cd_remove">Remove</string>
 </resources>

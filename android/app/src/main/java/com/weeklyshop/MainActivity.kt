@@ -55,14 +55,10 @@ class MainActivity : AppCompatActivity() {
             updatePager()
         }
         canvas.onPageChanged = { updatePager() }
+        canvas.onEntryErased = { entryId -> deleteErasedEntry(entryId) }
         pageLeft.setOnClickListener { canvas.goLeft() }
         pageRight.setOnClickListener { canvas.goRight() }
 
-        findViewById<ImageButton>(R.id.clear_button).setOnClickListener {
-            submitJob?.cancel()
-            status.text = ""
-            canvas.clear()
-        }
         findViewById<ImageButton>(R.id.basket_button).setOnClickListener { openBasket() }
         findViewById<ImageButton>(R.id.basket_close).setOnClickListener { closeBasket() }
         basketOverlay.setOnClickListener { closeBasket() }
@@ -110,11 +106,11 @@ class MainActivity : AppCompatActivity() {
                 when (result.status) {
                     "matched" -> {
                         status.text = getString(R.string.status_added, result.itemName)
-                        canvas.commitPending(batch.id)
+                        canvas.linkPending(batch.id, result.basketEntryId)
                         refreshBadge()
                     }
                     "ambiguous" -> {
-                        canvas.commitPending(batch.id)
+                        canvas.linkPending(batch.id, result.basketEntryId)
                         refreshBadge()
                         pickCandidate(result)
                     }
@@ -133,6 +129,19 @@ class MainActivity : AppCompatActivity() {
                 canvas.releasePending(batch.id)
                 scheduleSubmit(RETRY_MS)
             }
+        }
+    }
+
+    /** Ink of a basketed item was rubbed out: the entry goes with it. */
+    private fun deleteErasedEntry(entryId: Int) {
+        lifecycleScope.launch {
+            try {
+                api.deleteEntry(entryId)
+            } catch (e: Exception) {
+                status.text = getString(R.string.status_offline)
+                canvas.flushDisplay()
+            }
+            refreshBadge()
         }
     }
 
@@ -239,6 +248,7 @@ class MainActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     try {
                         api.deleteEntry(entry.id)
+                        canvas.removeEntryInk(entry.id)
                         renderBasket(api.basket())
                     } catch (e: Exception) {
                         basketCount.text = getString(R.string.status_offline)
