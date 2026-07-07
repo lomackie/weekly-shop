@@ -61,9 +61,12 @@ out.
 - **Ambiguous matches** open a picker dialog (raw pen layer suspended around
   it for the same reason); the choice is posted to
   `POST /basket/{id}/resolve`, which also teaches the server the alias.
-- **Known trade-off**: a server reply flushes the e-ink display by toggling
-  the raw layer off/on for a frame; a stroke mid-flight at that exact moment
-  can lose its live ink preview (the recorded points are unaffected).
+- **Known trade-off**: a server reply flushes the e-ink display (✓ marks,
+  badge, highlights) by toggling the raw layer off/on for a frame, which
+  stutters a stroke mid-flight. Since eager flushing makes replies land
+  mid-writing, that repaint is deferred until the pen has been quiet for
+  `PEN_QUIET_MS` (1 s) — outcomes appear when the writer pauses, never under
+  the pen.
 - **BOOX Pen SDK** (`onyxsdk-pen`) is integrated behind a
   `Build.MANUFACTURER == "ONYX"` gate, with an adaptive fallback: if the raw
   pen pipeline never delivers callbacks, the stylus permanently falls back to

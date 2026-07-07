@@ -482,10 +482,49 @@ class InkCanvasView @JvmOverloads constructor(
         runCatching { touchHelper?.setRawDrawingEnabled(rawDrawingWanted) }
     }
 
-    /** Repaint the view from the committed bitmap, temporarily dropping the
-     *  raw layer so stale SDK ink is cleared from the screen. Also the only
-     *  way sibling views' updates reach the e-ink panel while raw is on. */
+    /** Uptime of the last stylus event; repaints hold off until the pen has
+     *  been quiet for a beat, because [performRefresh]'s raw-layer toggle
+     *  interrupts live writing (and can eat the start of a stroke). */
+    private var lastPenActivityAt = 0L
+    private var penStrokeInProgress = false
+    private var refreshQueued = false
+
+    private val quietRefresh = object : Runnable {
+        override fun run() {
+            if (!refreshQueued) return
+            if (penBusy()) {
+                postDelayed(this, QUIET_POLL_MS)
+            } else {
+                refreshQueued = false
+                performRefresh()
+            }
+        }
+    }
+
+    private fun penBusy(): Boolean =
+        penStrokeInProgress ||
+            SystemClock.uptimeMillis() - lastPenActivityAt < PEN_QUIET_MS
+
+    /** Repaint the view from the committed bitmap — immediately when the pen
+     *  is at rest, otherwise once it has been quiet for [PEN_QUIET_MS]. With
+     *  eager line flushing, server replies routinely land mid-writing; the
+     *  ✓ and badge can wait, a stutter under the pen cannot. */
     private fun refreshFromBitmap() {
+        if (penBusy()) {
+            if (!refreshQueued) {
+                refreshQueued = true
+                postDelayed(quietRefresh, QUIET_POLL_MS)
+            }
+            return
+        }
+        refreshQueued = false
+        performRefresh()
+    }
+
+    /** Temporarily drops the raw layer so stale SDK ink is cleared from the
+     *  screen. Also the only way sibling views' updates reach the e-ink
+     *  panel while raw is on. */
+    private fun performRefresh() {
         val helper = touchHelper
         if (helper != null && rawDrawingWanted) {
             runCatching { helper.setRawDrawingEnabled(false) }
@@ -513,6 +552,16 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun handleDrawTouch(event: MotionEvent): Boolean {
+        // MotionEvents flow even while the raw layer owns the pen (the
+        // shadow-stroke fallback depends on that), so this sees every stylus
+        // touch regardless of which pipeline is rendering.
+        lastPenActivityAt = SystemClock.uptimeMillis()
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> penStrokeInProgress = true
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                penStrokeInProgress = false
+        }
+
         // The raw layer owns the pen while it is on; letting events through
         // here as well would record every stroke twice. But its callbacks
         // come from a background reader that can trail the first MotionEvents
@@ -707,6 +756,12 @@ class InkCanvasView @JvmOverloads constructor(
          *  newest stroke: crossing a t just after starting the next line must
          *  not flush that half-written line as if it were finished. */
         private const val LINE_SETTLE_MS = 800L
+
+        /** Repaints (✓ marks, highlights, badge) wait until the pen has been
+         *  quiet this long — long enough to clear inter-word gaps, so the
+         *  raw-layer toggle never stutters active writing. */
+        private const val PEN_QUIET_MS = 1000L
+        private const val QUIET_POLL_MS = 250L
 
         private val IS_BOOX = android.os.Build.MANUFACTURER.equals("ONYX", ignoreCase = true)
     }
