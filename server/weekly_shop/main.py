@@ -97,11 +97,16 @@ def submit_ink(body: InkRequest, request: Request) -> InkResponse:
     else:
         raise HTTPException(status_code=422, detail="strokes or image_base64 required")
 
-    strokes = [[p.model_dump() for p in stroke] for stroke in body.strokes]
-    text = request.app.state.recognizer.recognize(image_png, strokes)
-
     settings = request.app.state.settings
     conn = request.app.state.conn
+
+    strokes = [[p.model_dump() for p in stroke] for stroke in body.strokes]
+    vocabulary = sorted(
+        {text for text, _ in db.alias_candidates(conn)}, key=str.lower
+    )
+    text = request.app.state.recognizer.recognize(
+        image_png, strokes, vocabulary=vocabulary
+    )
     result = matching.match(
         conn, text, settings.match_threshold, settings.candidate_threshold
     )

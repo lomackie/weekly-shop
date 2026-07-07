@@ -18,15 +18,18 @@ e.g. `ocado.com/products/...-13175011`).
 
 ## Configuration
 
-Environment variables (or `server/.env`), all prefixed `WEEKLY_SHOP_`:
+Environment variables (or `.env` in `server/` or the repo root), all prefixed
+`WEEKLY_SHOP_`:
 
 | Variable            | Default                      | Notes                                    |
 | ------------------- | ---------------------------- | ---------------------------------------- |
 | `DB_PATH`           | `weekly_shop.sqlite3`        | SQLite file                              |
-| `RECOGNIZER`        | `stub`                       | `stub` or `claude`                       |
+| `RECOGNIZER`        | `auto`                       | `auto`, `stub`, `claude`, or `openai`; `auto` prefers claude, then openai, by configured key |
 | `STUB_TEXT`         | `milk`                       | what the stub "recognises"               |
-| `ANTHROPIC_API_KEY` | —                            | required for `claude`                    |
+| `ANTHROPIC_API_KEY` | —                            | required for `claude`; the unprefixed name `ANTHROPIC_API_KEY` also works |
 | `ANTHROPIC_MODEL`   | `claude-haiku-4-5-20251001`  |                                          |
+| `OPENAI_API_KEY`    | —                            | required for `openai`; the unprefixed name `OPENAI_API_KEY` also works |
+| `OPENAI_MODEL`      | `gpt-5.4-mini`               |                                          |
 | `MATCH_THRESHOLD`   | `87`                         | score (0-100) to auto-accept a match     |
 | `CANDIDATE_THRESHOLD` | `55`                       | minimum score to offer as a candidate    |
 

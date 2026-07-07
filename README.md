@@ -42,9 +42,10 @@ collected into a basket.
 
 The server runs on the homelab box (`beelink`) as a systemd user service on
 port 8000; the app points at it via `server_url` in the Android resources.
-It currently uses the stub recogniser — set `WEEKLY_SHOP_RECOGNIZER=claude`
-and an API key in `server/.env` (see [server/README.md](server/README.md))
-for real handwriting recognition.
+Handwriting recognition is live via Claude Haiku: the recogniser defaults to
+`auto`, which uses the Anthropic API when `ANTHROPIC_API_KEY` is set in
+`server/.env` and the no-credentials stub otherwise (see
+[server/README.md](server/README.md)).
 
 Later: order placement via browser automation (no public Ocado API), and
 fixing the raw e-ink pen latency (see

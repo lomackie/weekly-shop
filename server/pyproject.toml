@@ -10,6 +10,7 @@ dependencies = [
     "rapidfuzz>=3.9",
     "pillow>=10.4",
     "anthropic>=0.40",
+    "openai>=2.44.0",
 ]
 
 [dependency-groups]
