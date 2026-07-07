@@ -5,6 +5,53 @@ from PIL import Image, ImageDraw
 Point = dict  # {"x": float, "y": float, "t": int (ms, optional)}
 Stroke = list[Point]
 
+# A dot or crossbar can float just clear of its line's ink band; anything
+# within this fraction of the typical line height is folded back in.
+LINE_SLACK = 0.3
+
+
+def segment_lines(strokes: list[Stroke]) -> list[list[int]]:
+    """Group strokes into handwritten lines by vertical position.
+
+    One line = one item is the writing contract, so each returned group is
+    recognised as a single item. Returns groups of indices into `strokes`,
+    ordered top to bottom.
+    """
+    intervals = sorted(
+        (
+            (min(p["y"] for p in stroke), max(p["y"] for p in stroke), i)
+            for i, stroke in enumerate(strokes)
+            if stroke
+        ),
+    )
+    if not intervals:
+        return []
+
+    # Pass 1: merge strokes whose vertical extents overlap.
+    clusters: list[list] = []  # [top, bottom, indices]
+    for top, bottom, idx in intervals:
+        if clusters and top <= clusters[-1][1]:
+            clusters[-1][1] = max(clusters[-1][1], bottom)
+            clusters[-1][2].append(idx)
+        else:
+            clusters.append([top, bottom, [idx]])
+
+    if len(clusters) > 1:
+        # Pass 2: an i-dot or t-bar written clear of the ink band shows up as
+        # a sliver cluster hovering near its line — fold near neighbours in.
+        heights = sorted(bottom - top for top, bottom, _ in clusters)
+        slack = LINE_SLACK * heights[len(heights) // 2]
+        merged = [clusters[0]]
+        for top, bottom, indices in clusters[1:]:
+            if top - merged[-1][1] < slack:
+                merged[-1][1] = max(merged[-1][1], bottom)
+                merged[-1][2].extend(indices)
+            else:
+                merged.append([top, bottom, indices])
+        clusters = merged
+
+    return [sorted(indices) for _, _, indices in clusters]
+
 
 def render_strokes(
     strokes: list[Stroke],

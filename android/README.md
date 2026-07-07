@@ -26,18 +26,26 @@ out.
 - **Interaction**: the stylus writes; a finger rub erases whole strokes (a
   double-tap-then-rub gate was tried and reverted — the plain rub is the
   point). No mode toggle, no submit button, no eraser button. Ink auto-sends
-  after a 2 s pen-idle pause (`MainActivity.IDLE_MS`);
-  offline sends are retried every 8 s with the ink kept on the page. One
+  after a 2 s pen-idle pause (`MainActivity.IDLE_MS`); lines the pen has
+  moved on from are sent immediately (`InkCanvasView.hasSettledFresh` — the
+  line containing the newest stroke, and any line written to within the last
+  `LINE_SETTLE_MS`, stays back), so a steadily written list is recognised
+  item by item without waiting for the writer to stop.
+  Offline sends are retried every 8 s with the ink kept on the page. One
   icon: the **basket** (with count badge) opens the basket panel. A small
   status line shows the last event (`✓ item`, `✕ text`, `⚠` offline).
+- **One line = one item**: the server segments each submission into
+  handwritten lines by vertical position and recognises every line as its
+  own item, reporting per-line outcomes with the stroke indices that formed
+  them. Writing an item across two lines will read as two items.
 - **The page is the list**: basketed ink stays on the page with a small grey
   ✓ beside it, linked to its basket entry. Rubbing out the last stroke of an
   item deletes its entry (`DELETE /basket/{id}`); deleting from the basket
   panel removes the item's ink from the page. Links live in memory only — an
   app restart leaves the basket intact but unlinked from any ink.
-- **Unparsed ink**: when the server returns `status=unmatched` nothing is
-  basketed; the ink stays put and the server's `unparsed_regions` bounding
-  box is drawn as a dashed rounded rect until the ink is rubbed out.
+- **Unparsed ink**: a line the server returns as `unmatched` is not
+  basketed; its ink stays put with a dashed rounded rect drawn around it
+  until it is rubbed out.
 - **Pages**: edge chevrons flip left/right (a finger swipe would fight the
   finger-eraser, hence buttons). The right chevron appears only once the
   current page has ink; flipping right past the last page creates the next

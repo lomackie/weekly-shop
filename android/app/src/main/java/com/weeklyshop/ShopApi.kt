@@ -1,6 +1,5 @@
 package com.weeklyshop
 
-import android.graphics.RectF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,13 +14,14 @@ class ShopApi(private val baseUrl: String) {
 
     data class Candidate(val id: Int, val name: String)
 
-    data class InkResult(
+    /** One handwritten line of a submission, recognised as one item. */
+    data class InkLine(
         val rawText: String,
         val status: String, // matched | ambiguous | unmatched
         val itemName: String?,
         val candidates: List<Candidate>,
         val basketEntryId: Int?, // null when unmatched: nothing was basketed
-        val unparsedRegion: RectF?, // ink the server flagged as unreadable
+        val strokeIndices: List<Int>, // which submitted strokes form this line
     )
 
     data class BasketEntry(
@@ -39,7 +39,9 @@ class ShopApi(private val baseUrl: String) {
 
     private val json = "application/json; charset=utf-8".toMediaType()
 
-    suspend fun submitInk(strokes: JSONArray): InkResult = withContext(Dispatchers.IO) {
+    /** The server splits the ink into lines (one item each) and reports on
+     *  every line; strokeIndices map each outcome back to the sent strokes. */
+    suspend fun submitInk(strokes: JSONArray): List<InkLine> = withContext(Dispatchers.IO) {
         val body = JSONObject().put("strokes", strokes)
         val payload = execute(
             Request.Builder()
@@ -47,27 +49,24 @@ class ShopApi(private val baseUrl: String) {
                 .post(body.toString().toRequestBody(json))
                 .build()
         )
-        val candidates = payload.getJSONArray("candidates")
-        val region = payload.optJSONArray("unparsed_regions")?.optJSONObject(0)
-        InkResult(
-            rawText = payload.getString("raw_text"),
-            status = payload.getString("status"),
-            itemName = payload.optJSONObject("item")?.getString("name"),
-            candidates = (0 until candidates.length()).map {
-                val c = candidates.getJSONObject(it)
-                Candidate(c.getInt("id"), c.getString("name"))
-            },
-            basketEntryId = if (payload.isNull("basket_entry_id")) null
-                            else payload.getInt("basket_entry_id"),
-            unparsedRegion = region?.let {
-                RectF(
-                    it.getDouble("left").toFloat(),
-                    it.getDouble("top").toFloat(),
-                    it.getDouble("right").toFloat(),
-                    it.getDouble("bottom").toFloat(),
-                )
-            },
-        )
+        val lines = payload.getJSONArray("lines")
+        (0 until lines.length()).map { i ->
+            val line = lines.getJSONObject(i)
+            val candidates = line.getJSONArray("candidates")
+            val indices = line.getJSONArray("stroke_indices")
+            InkLine(
+                rawText = line.getString("raw_text"),
+                status = line.getString("status"),
+                itemName = line.optJSONObject("item")?.getString("name"),
+                candidates = (0 until candidates.length()).map {
+                    val c = candidates.getJSONObject(it)
+                    Candidate(c.getInt("id"), c.getString("name"))
+                },
+                basketEntryId = if (line.isNull("basket_entry_id")) null
+                                else line.getInt("basket_entry_id"),
+                strokeIndices = (0 until indices.length()).map { indices.getInt(it) },
+            )
+        }
     }
 
     /** Fix up an ambiguous/unmatched entry; the server learns the alias. */

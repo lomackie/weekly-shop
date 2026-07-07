@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -6,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from . import db, matching
 from .config import get_settings
-from .ink import render_strokes
+from .ink import render_strokes, segment_lines
 from .recognition import build_recognizer
 
 
@@ -41,24 +42,21 @@ class ItemOut(BaseModel):
     score: float | None = None
 
 
-class Region(BaseModel):
-    """Bounding box in the tablet's stroke coordinate space."""
+class InkLine(BaseModel):
+    """One handwritten line of the submission, recognised as one item."""
 
-    left: float
-    top: float
-    right: float
-    bottom: float
-
-
-class InkResponse(BaseModel):
     raw_text: str
     status: str  # matched | ambiguous | unmatched
     item: ItemOut | None = None
     candidates: list[ItemOut] = Field(default_factory=list)
-    basket_entry_id: int | None = None
-    # Ink the server could not turn into an item; the tablet highlights these
-    # so the writer knows to rub out and retry.
-    unparsed_regions: list[Region] = Field(default_factory=list)
+    basket_entry_id: int | None = None  # None when unmatched: nothing basketed
+    # Which of the submitted strokes make up this line, so the tablet can tie
+    # the outcome (✓ link, unparsed highlight) back to the exact ink.
+    stroke_indices: list[int] = Field(default_factory=list)
+
+
+class InkResponse(BaseModel):
+    lines: list[InkLine]
 
 
 class ItemIn(BaseModel):
@@ -75,12 +73,6 @@ def _candidate_out(c: matching.Candidate) -> ItemOut:
     return ItemOut(id=c.item_id, name=c.name, ocado_id=c.ocado_id, score=c.score)
 
 
-def _strokes_region(strokes: list[list[InkPoint]]) -> Region:
-    xs = [p.x for stroke in strokes for p in stroke]
-    ys = [p.y for stroke in strokes for p in stroke]
-    return Region(left=min(xs), top=min(ys), right=max(xs), bottom=max(ys))
-
-
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -88,52 +80,74 @@ def health() -> dict:
 
 @app.post("/ink", response_model=InkResponse)
 def submit_ink(body: InkRequest, request: Request) -> InkResponse:
-    if body.image_base64:
-        image_png = base64.b64decode(body.image_base64)
-    elif body.strokes:
-        image_png = render_strokes(
-            [[p.model_dump() for p in stroke] for stroke in body.strokes]
-        )
+    settings = request.app.state.settings
+    conn = request.app.state.conn
+    recognizer = request.app.state.recognizer
+
+    strokes = [[p.model_dump() for p in stroke] for stroke in body.strokes]
+    if strokes:
+        # One line = one item: split the submission before recognition so a
+        # multi-item batch never gets transcribed as one garbled item.
+        groups = segment_lines(strokes)
+        images = [render_strokes([strokes[i] for i in group]) for group in groups]
+    elif body.image_base64:
+        # Image-only submissions can't be segmented; treat as a single line.
+        groups = [[]]
+        images = [base64.b64decode(body.image_base64)]
     else:
         raise HTTPException(status_code=422, detail="strokes or image_base64 required")
 
-    settings = request.app.state.settings
-    conn = request.app.state.conn
-
-    strokes = [[p.model_dump() for p in stroke] for stroke in body.strokes]
     vocabulary = sorted(
         {text for text, _ in db.alias_candidates(conn)}, key=str.lower
     )
-    text = request.app.state.recognizer.recognize(
-        image_png, strokes, vocabulary=vocabulary
-    )
-    result = matching.match(
-        conn, text, settings.match_threshold, settings.candidate_threshold
-    )
 
-    if result.status == "unmatched":
-        # Nothing lands in the basket. Report where the failed ink sits so the
-        # tablet can highlight it; there is no real region detection yet, so
-        # the whole submission is flagged.
-        return InkResponse(
-            raw_text=text,
-            status=result.status,
-            unparsed_regions=[_strokes_region(body.strokes)] if body.strokes else [],
+    def recognize(image_and_group: tuple[bytes, list[int]]) -> str:
+        image, group = image_and_group
+        return recognizer.recognize(
+            image, [strokes[i] for i in group], vocabulary=vocabulary
         )
 
-    item_id = result.best.item_id if result.best else None
-    entry_id = db.add_basket_entry(conn, text, item_id, result.status)
-    if result.best:
-        # Learn this handwriting-as-recognised as an alias for next time.
-        db.add_alias(conn, text, result.best.item_id)
+    # Lines are independent, so a multi-line batch costs about the same wall
+    # time as one line. Only recognition runs off-thread: the sqlite
+    # connection stays on this thread.
+    if len(images) == 1:
+        texts = [recognize((images[0], groups[0]))]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(images), 8)) as pool:
+            texts = list(pool.map(recognize, zip(images, groups)))
 
-    return InkResponse(
-        raw_text=text,
-        status=result.status,
-        item=_candidate_out(result.best) if result.best else None,
-        candidates=[_candidate_out(c) for c in result.candidates],
-        basket_entry_id=entry_id,
-    )
+    lines = []
+    for text, group in zip(texts, groups):
+        result = matching.match(
+            conn, text, settings.match_threshold, settings.candidate_threshold
+        )
+
+        if result.status == "unmatched":
+            # Nothing lands in the basket; the tablet highlights this line's
+            # strokes so the writer knows to rub out and retry.
+            lines.append(
+                InkLine(raw_text=text, status=result.status, stroke_indices=group)
+            )
+            continue
+
+        item_id = result.best.item_id if result.best else None
+        entry_id = db.add_basket_entry(conn, text, item_id, result.status)
+        if result.best:
+            # Learn this handwriting-as-recognised as an alias for next time.
+            db.add_alias(conn, text, result.best.item_id)
+
+        lines.append(
+            InkLine(
+                raw_text=text,
+                status=result.status,
+                item=_candidate_out(result.best) if result.best else None,
+                candidates=[_candidate_out(c) for c in result.candidates],
+                basket_entry_id=entry_id,
+                stroke_indices=group,
+            )
+        )
+
+    return InkResponse(lines=lines)
 
 
 @app.get("/basket")

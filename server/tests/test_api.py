@@ -51,44 +51,57 @@ def test_ink_to_basket_round_trip(client):
 
     resp = client.post("/ink", json=STROKES)
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "matched"
-    assert body["raw_text"] == "milk"
-    assert body["item"]["id"] == item_id
+    lines = resp.json()["lines"]
+    assert len(lines) == 1
+    assert lines[0]["status"] == "matched"
+    assert lines[0]["raw_text"] == "milk"
+    assert lines[0]["item"]["id"] == item_id
+    assert lines[0]["stroke_indices"] == [0, 1]
 
     basket = client.get("/basket").json()
     assert len(basket) == 1
     assert basket[0]["item_id"] == item_id
 
 
-def test_unmatched_ink_returns_region_and_skips_basket(client):
+def test_multi_line_ink_baskets_each_line(client):
+    seed_milk(client)
+
+    # Two vertically separated lines: each is recognised and basketed on its
+    # own, with the strokes that produced it identified.
+    resp = client.post(
+        "/ink",
+        json={
+            "strokes": [
+                [{"x": 0, "y": 0, "t": 0}, {"x": 40, "y": 10, "t": 20}],
+                [{"x": 0, "y": 100, "t": 900}, {"x": 40, "y": 112, "t": 920}],
+            ]
+        },
+    )
+    lines = resp.json()["lines"]
+    assert [line["status"] for line in lines] == ["matched", "matched"]
+    assert [line["stroke_indices"] for line in lines] == [[0], [1]]
+    assert len(client.get("/basket").json()) == 2
+
+
+def test_unmatched_ink_flags_line_and_skips_basket(client):
     resp = client.post("/ink", json=STROKES)  # no items seeded
-    body = resp.json()
-    assert body["status"] == "unmatched"
-    assert body["item"] is None
-    assert body["basket_entry_id"] is None
-    # Stub detection: the whole submission's bounding box is flagged.
-    assert body["unparsed_regions"] == [
-        {"left": 0.0, "top": 0.0, "right": 12.0, "bottom": 10.0}
-    ]
+    line = resp.json()["lines"][0]
+    assert line["status"] == "unmatched"
+    assert line["item"] is None
+    assert line["basket_entry_id"] is None
+    # The tablet highlights these strokes for a rub-out-and-retry.
+    assert line["stroke_indices"] == [0, 1]
 
     assert client.get("/basket").json() == []
-
-
-def test_matched_ink_has_no_unparsed_regions(client):
-    seed_milk(client)
-    body = client.post("/ink", json=STROKES).json()
-    assert body["status"] == "matched"
-    assert body["unparsed_regions"] == []
 
 
 def test_resolve_ambiguous_entry_learns_alias(picky_client):
     item_id = seed_milk(picky_client)
 
-    body = picky_client.post("/ink", json=STROKES).json()
-    assert body["status"] == "ambiguous"
-    assert [c["id"] for c in body["candidates"]] == [item_id]
-    entry_id = body["basket_entry_id"]
+    line = picky_client.post("/ink", json=STROKES).json()["lines"][0]
+    assert line["status"] == "ambiguous"
+    assert [c["id"] for c in line["candidates"]] == [item_id]
+    entry_id = line["basket_entry_id"]
 
     resp = picky_client.post(f"/basket/{entry_id}/resolve", json={"item_id": item_id})
     assert resp.status_code == 200
@@ -104,6 +117,6 @@ def test_empty_request_rejected(client):
 
 def test_delete_basket_entry(client):
     seed_milk(client)
-    entry_id = client.post("/ink", json=STROKES).json()["basket_entry_id"]
+    entry_id = client.post("/ink", json=STROKES).json()["lines"][0]["basket_entry_id"]
     assert client.delete(f"/basket/{entry_id}").status_code == 200
     assert client.get("/basket").json() == []

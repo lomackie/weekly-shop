@@ -15,9 +15,11 @@ import kotlinx.coroutines.launch
 
 /**
  * No submit button: ink is sent automatically once the pen has been idle for
- * [IDLE_MS]. Matched ink vanishes from the page (that is the confirmation);
- * ink the server can't parse stays put inside a dashed highlight until it is
- * rubbed out. The status line and the basket badge carry everything else.
+ * [IDLE_MS] — and lines the pen has moved on from are sent immediately, so a
+ * list written at a steady pace is recognised item by item while the writer
+ * is still going. Basketed ink stays on the page and gains a ✓; ink the
+ * server can't parse stays put inside a dashed highlight until it is rubbed
+ * out. The status line and the basket badge carry everything else.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -51,6 +53,11 @@ class MainActivity : AppCompatActivity() {
         pageIndicator = findViewById(R.id.page_indicator)
 
         canvas.onStrokesChanged = {
+            // A finished line left behind goes straight away; the idle timer
+            // only has to cover the line still being written.
+            if (canvas.hasSettledFresh) {
+                lifecycleScope.launch { submit(settledOnly = true) }
+            }
             scheduleSubmit(IDLE_MS)
             updatePager()
         }
@@ -99,30 +106,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun submit() {
-        for (batch in canvas.beginPendingBatches()) {
+    private suspend fun submit(settledOnly: Boolean = false) {
+        for (batch in canvas.beginPendingBatches(settledOnly)) {
             try {
-                val result = api.submitInk(batch.strokes)
-                when (result.status) {
-                    "matched" -> {
-                        status.text = getString(R.string.status_added, result.itemName)
-                        canvas.linkPending(batch.id, result.basketEntryId)
-                        refreshBadge()
-                    }
-                    "ambiguous" -> {
-                        canvas.linkPending(batch.id, result.basketEntryId)
-                        refreshBadge()
-                        pickCandidate(result)
-                    }
-                    else -> {
-                        status.text = if (result.rawText.isBlank()) {
-                            getString(R.string.status_unparsed_blank)
-                        } else {
-                            getString(R.string.status_unparsed, result.rawText)
+                val lines = api.submitInk(batch.strokes)
+                val added = mutableListOf<String>()
+                var unparsed: ShopApi.InkLine? = null
+                var basketed = false
+                for (line in lines) {
+                    when (line.status) {
+                        "matched" -> {
+                            canvas.linkPendingLine(
+                                batch.id, line.strokeIndices, line.basketEntryId
+                            )
+                            line.itemName?.let { added.add(it) }
+                            basketed = true
                         }
-                        canvas.failPending(batch.id, result.unparsedRegion)
+                        "ambiguous" -> {
+                            canvas.linkPendingLine(
+                                batch.id, line.strokeIndices, line.basketEntryId
+                            )
+                            basketed = true
+                            pickCandidate(line)
+                        }
+                        else -> {
+                            canvas.failPendingLine(batch.id, line.strokeIndices)
+                            if (unparsed == null) unparsed = line
+                        }
                     }
                 }
+                canvas.finishPending(batch.id)
+                // An unparsed line needs acting on, so it wins the status line.
+                val failed = unparsed
+                when {
+                    failed != null && failed.rawText.isBlank() ->
+                        status.text = getString(R.string.status_unparsed_blank)
+                    failed != null ->
+                        status.text = getString(R.string.status_unparsed, failed.rawText)
+                    added.isNotEmpty() ->
+                        status.text =
+                            getString(R.string.status_added, added.joinToString(", "))
+                }
+                if (basketed) refreshBadge()
             } catch (e: Exception) {
                 // Offline or server down: keep the ink and retry quietly.
                 status.text = getString(R.string.status_offline)
@@ -159,13 +184,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Ambiguous match: offer the candidates; the server learns the choice. */
-    private fun pickCandidate(result: ShopApi.InkResult) {
-        val entryId = result.basketEntryId ?: return
+    private fun pickCandidate(line: ShopApi.InkLine) {
+        val entryId = line.basketEntryId ?: return
         canvas.setActive(false)
         AlertDialog.Builder(this)
-            .setTitle(getString(R.string.pick_title, result.rawText))
-            .setItems(result.candidates.map { it.name }.toTypedArray()) { _, which ->
-                val chosen = result.candidates[which]
+            .setTitle(getString(R.string.pick_title, line.rawText))
+            .setItems(line.candidates.map { it.name }.toTypedArray()) { _, which ->
+                val chosen = line.candidates[which]
                 lifecycleScope.launch {
                     status.text = try {
                         api.resolve(entryId, chosen.id)
@@ -176,7 +201,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .setNegativeButton(R.string.leave_as_is) { _, _ ->
-                status.text = getString(R.string.status_kept, result.rawText)
+                status.text = getString(R.string.status_kept, line.rawText)
             }
             .setOnDismissListener {
                 if (basketOverlay.visibility != View.VISIBLE) canvas.setActive(true)

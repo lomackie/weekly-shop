@@ -22,17 +22,17 @@ collected into a basket.
 
 ## The loop
 
-1. Write an item name on the tablet with the pen (a finger rubs strokes out).
-   There is nothing to tap: after a 2 s writing pause the app posts the ink
-   to `POST /ink` automatically.
-2. Server recognises the text, fuzzy-matches it against the item/alias table,
-   and appends a basket entry.
+1. Write item names on the tablet with the pen, one per line (a finger rubs
+   strokes out). There is nothing to tap: a line is posted to `POST /ink` as
+   soon as the pen moves on to the next one, and a 2 s writing pause sends
+   whatever is left.
+2. Server splits the ink into lines, recognises each line as one item,
+   fuzzy-matches it against the item/alias table, and appends a basket entry.
 3. The page is the list: basketed ink stays put and gains a ✓, and the
    basket badge ticks up. Rubbing an item out with a finger removes it from
    the basket as well. Ambiguous matches open a
-   picker whose choice is learned as an alias. Ink the server can't parse is
-   framed by a dashed highlight (from the server's `unparsed_regions`
-   coordinates) — rub it out and rewrite.
+   picker whose choice is learned as an alias. A line the server can't parse
+   is framed by a dashed highlight — rub it out and rewrite.
 4. The basket icon opens the list for review; deleting there also lifts the
    item's ink off the page. Edge chevrons flip between pages; a new page
    appears by flipping right off a written-on page, and empty pages collapse

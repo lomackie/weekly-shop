@@ -35,15 +35,17 @@ Environment variables (or `.env` in `server/` or the repo root), all prefixed
 
 ## API
 
-- `POST /ink` — `{strokes: [[{x,y,t},…],…], image_base64?}`. Renders the
-  strokes to PNG (unless an image is supplied), recognises, matches, and adds
-  a basket entry. Returns `{raw_text, status, item?, candidates,
-  basket_entry_id?, unparsed_regions}` where `status` is `matched` /
-  `ambiguous` / `unmatched`. Unmatched ink is **not** basketed: instead
-  `unparsed_regions` carries bounding boxes (`{left, top, right, bottom}`, in
-  the tablet's stroke coordinate space) that the tablet highlights so the
-  writer knows to rub the ink out and retry. There is no real region
-  detection yet — the whole submission's bounding box is flagged.
+- `POST /ink` — `{strokes: [[{x,y,t},…],…], image_base64?}`. Segments the
+  strokes into handwritten lines by vertical position (one line = one item),
+  renders each line to PNG, recognises the lines concurrently, matches, and
+  adds a basket entry per matched line. Returns `{lines: [{raw_text, status,
+  item?, candidates, basket_entry_id?, stroke_indices}, …]}` where `status`
+  is `matched` / `ambiguous` / `unmatched` and `stroke_indices` says which of
+  the submitted strokes form that line, so the tablet can tie each outcome
+  back to the exact ink. Unmatched lines are **not** basketed: the tablet
+  highlights their strokes so the writer knows to rub them out and retry.
+  An `image_base64` submission can't be segmented and is treated as a single
+  line with empty `stroke_indices`.
 - `GET /basket`, `DELETE /basket/{id}`
 - `POST /basket/{id}/resolve` — `{item_id}`; fixes up an ambiguous entry and
   learns the raw text as an alias for that item.
