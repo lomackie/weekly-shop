@@ -33,7 +33,7 @@ which replies with the matched item. Rub a stroke with a finger to erase it.
 
 ## Known issues / next steps
 
-- **Pen latency** (fix applied, needs on-device verification): the raw layer
+- **Pen latency** (fixed, verified on the tablet 2026-07-07): the raw layer
   opening cleanly but never delivering callbacks matched a known failure mode
   on recent firmware. Three changes, mirroring what the Saber app's BOOX
   plugin does: `HiddenApiBypass.addHiddenApiExemptions("")` on Android 11+
@@ -43,9 +43,8 @@ which replies with the matched item. Rub a stroke with a finger to erase it.
   completes with no raw callback before abandoning the raw path (the
   callbacks arrive from a background thread, so judging at pen-down could
   falsely abandon a working pipeline — and the probe stroke is kept either
-  way). Verify on the tablet: `adb logcat -s InkCanvasView` should show
-  `onBeginRawDrawing` on the first stroke, and ink should feel as immediate
-  as the native notebook app.
+  way; logcat showed the DOWN and the raw callback landing in the same
+  millisecond, so the race was real).
 - For wall duty: disable the screensaver/auto-sleep in BOOX settings, exempt
   the app from their app-freezing battery settings, and consider setting it
   as the launcher (kiosk mode).
