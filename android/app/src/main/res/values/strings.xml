@@ -3,14 +3,28 @@
     <string name="app_name">Weekly Shop</string>
 
     <!-- Point this at the homelab server -->
-    <string name="server_url" translatable="false">http://192.168.1.100:8000</string>
+    <string name="server_url" translatable="false">http://192.168.68.103:8000</string>
 
-    <string name="prompt">Write an item, then tap Done</string>
+    <string name="prompt">Write an item with the pen, then tap Done — rub out with a finger</string>
     <string name="sending">Sending…</string>
     <string name="added">Added: %1$s</string>
-    <string name="ambiguous">Read \"%1$s\" — did you mean: %2$s?</string>
+    <string name="ambiguous">Read \"%1$s\" — pick the item you meant</string>
+    <string name="pick_title">Did you mean… (\"%1$s\")</string>
+    <string name="leave_as_is">Leave as-is</string>
     <string name="unmatched">Read \"%1$s\" but no match — saved to basket as-is</string>
     <string name="send_failed">Failed to reach server: %1$s</string>
+
+    <string name="basket">Basket</string>
+    <string name="basket_title">Basket (%1$d)</string>
+    <string name="basket_empty">Basket is empty</string>
+    <string name="basket_unresolved">%1$s (unresolved)</string>
+    <string name="delete_confirm">Remove \"%1$s\" from the basket?</string>
+    <string name="remove">Remove</string>
+    <string name="removed">Removed: %1$s</string>
+    <string name="cancel">Cancel</string>
+    <string name="close">Close</string>
+
+    <string name="undo">Undo</string>
     <string name="clear">Clear</string>
     <string name="done">Done</string>
 </resources>

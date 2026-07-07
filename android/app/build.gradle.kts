@@ -29,6 +29,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    packaging {
+        // onyxsdk-pen and its mmkv dependency both bundle libc++_shared.so
+        jniLibs.pickFirsts += "lib/**/libc++_shared.so"
+    }
 }
 
 dependencies {
@@ -38,7 +43,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Low-latency e-ink pen rendering (see InkCanvasView). Requires the BOOX
-    // maven repo in settings.gradle.kts; check their GitHub for the latest:
-    // implementation("com.onyx.android.sdk:onyxsdk-pen:1.4.11")
+    // Low-latency e-ink pen rendering (see InkCanvasView); resolved from the
+    // BOOX maven repo in settings.gradle.kts.
+    implementation("com.onyx.android.sdk:onyxsdk-pen:1.4.11")
 }

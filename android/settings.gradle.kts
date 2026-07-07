@@ -11,12 +11,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // Onyx BOOX SDK, needed once we switch the canvas to the Pen SDK for
-        // low-latency e-ink drawing (their repo is http-only):
-        // maven {
-        //     url = uri("http://repo.boox.com/repository/maven-public/")
-        //     isAllowInsecureProtocol = true
-        // }
+        // Onyx BOOX SDK, for low-latency e-ink pen drawing (repo is http-only)
+        maven {
+            url = uri("http://repo.boox.com/repository/maven-public/")
+            isAllowInsecureProtocol = true
+        }
     }
 }
 

@@ -20,13 +20,25 @@ collected into a basket.
   captures pen strokes and posts them to the server. See
   [android/README.md](android/README.md).
 
-## PoC loop
+## The loop
 
-1. Write an item name on the tablet, tap **Done**.
-2. App posts the ink strokes (and a rendered PNG) to `POST /ink`.
+1. Write an item name on the tablet with the pen (a finger rubs strokes out),
+   tap **Done**.
+2. App posts the ink strokes to `POST /ink`.
 3. Server recognises the text, fuzzy-matches it against the item/alias table,
    and appends a basket entry.
-4. App shows what was matched; canvas clears for the next item.
+4. App shows what was matched; canvas clears for the next item. Ambiguous
+   matches open a picker whose choice is learned as an alias; the **Basket**
+   button reviews and prunes the list.
 
-Later: basket view on the tablet, multiple-choice resolution for ambiguous
-matches, and order placement via browser automation (no public Ocado API).
+## Deployment
+
+The server runs on the homelab box (`beelink`) as a systemd user service on
+port 8000; the app points at it via `server_url` in the Android resources.
+It currently uses the stub recogniser — set `WEEKLY_SHOP_RECOGNIZER=claude`
+and an API key in `server/.env` (see [server/README.md](server/README.md))
+for real handwriting recognition.
+
+Later: order placement via browser automation (no public Ocado API), and
+fixing the raw e-ink pen latency (see
+[android/README.md](android/README.md)).

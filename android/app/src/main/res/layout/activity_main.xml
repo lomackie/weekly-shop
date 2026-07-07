@@ -28,6 +28,22 @@
         android:padding="8dp">
 
         <Button
+            android:id="@+id/basket_button"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/basket" />
+
+        <Button
+            android:id="@+id/undo_button"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="@string/undo" />
+
+        <Button
             android:id="@+id/clear_button"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
