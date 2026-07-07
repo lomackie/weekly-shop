@@ -1,5 +1,6 @@
 package com.weeklyshop
 
+import android.graphics.RectF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -19,7 +20,8 @@ class ShopApi(private val baseUrl: String) {
         val status: String, // matched | ambiguous | unmatched
         val itemName: String?,
         val candidates: List<Candidate>,
-        val basketEntryId: Int,
+        val basketEntryId: Int?, // null when unmatched: nothing was basketed
+        val unparsedRegion: RectF?, // ink the server flagged as unreadable
     )
 
     data class BasketEntry(
@@ -46,6 +48,7 @@ class ShopApi(private val baseUrl: String) {
                 .build()
         )
         val candidates = payload.getJSONArray("candidates")
+        val region = payload.optJSONArray("unparsed_regions")?.optJSONObject(0)
         InkResult(
             rawText = payload.getString("raw_text"),
             status = payload.getString("status"),
@@ -54,7 +57,16 @@ class ShopApi(private val baseUrl: String) {
                 val c = candidates.getJSONObject(it)
                 Candidate(c.getInt("id"), c.getString("name"))
             },
-            basketEntryId = payload.getInt("basket_entry_id"),
+            basketEntryId = if (payload.isNull("basket_entry_id")) null
+                            else payload.getInt("basket_entry_id"),
+            unparsedRegion = region?.let {
+                RectF(
+                    it.getDouble("left").toFloat(),
+                    it.getDouble("top").toFloat(),
+                    it.getDouble("right").toFloat(),
+                    it.getDouble("bottom").toFloat(),
+                )
+            },
         )
     }
 

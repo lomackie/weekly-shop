@@ -4,9 +4,11 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.Log
 import android.view.MotionEvent
@@ -23,6 +25,18 @@ import org.json.JSONObject
  * strokes. Strokes are captured as (x, y, t) points for the server and drawn
  * locally for feedback.
  *
+ * There is no submit button: the activity watches [onStrokesChanged] and
+ * auto-sends after a writing pause. Each send takes per-page snapshots via
+ * [beginPendingBatches]; the activity then settles each batch with
+ * [commitPending] (matched: the ink vanishes), [failPending] (unparsed: the
+ * ink stays and the region the server flagged is highlighted), or
+ * [releasePending] (network error: the ink goes back into the next send).
+ *
+ * Ink lives on pages. [goLeft]/[goRight] flip between them; flipping right
+ * past the last page creates a new one, but only when the current page has
+ * ink — and a page left empty collapses away, so pages exist only where ink
+ * is (plus the one being written on).
+ *
  * On BOOX devices the Pen SDK's TouchHelper renders stylus ink directly on
  * the e-ink layer with near-zero latency; committed strokes are mirrored
  * into [bitmap] so they survive refreshes. If the raw pen pipeline never
@@ -36,7 +50,32 @@ class InkCanvasView @JvmOverloads constructor(
 
     data class Point(val x: Float, val y: Float, val t: Long)
 
-    private val strokes = mutableListOf<MutableList<Point>>()
+    private enum class State { FRESH, PENDING, FAILED }
+
+    /** Identity matters (strokes live in batches and highlights) — keep this
+     *  a plain class so equality stays referential. */
+    private class Stroke(val points: MutableList<Point> = mutableListOf()) {
+        var state = State.FRESH
+    }
+
+    private class Highlight(val rect: RectF, val strokes: List<Stroke>)
+
+    private class Page {
+        val strokes = mutableListOf<Stroke>()
+        val highlights = mutableListOf<Highlight>()
+    }
+
+    class PendingBatch internal constructor(val id: Int, val strokes: JSONArray)
+
+    private class PageBatch(val page: Page, val strokes: List<Stroke>)
+
+    private val pages = mutableListOf(Page())
+    private var pageIndex = 0
+    private val strokes get() = pages[pageIndex].strokes
+    private val highlights get() = pages[pageIndex].highlights
+
+    private val pendingBatches = mutableMapOf<Int, PageBatch>()
+    private var nextBatchId = 1
 
     private var bitmap: Bitmap? = null
     private var bitmapCanvas: Canvas? = null
@@ -50,8 +89,17 @@ class InkCanvasView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
+    private val highlightPaint = Paint().apply {
+        isAntiAlias = true
+        color = 0xFF777777.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+        pathEffect = DashPathEffect(floatArrayOf(16f, 12f), 0f)
+    }
+
     private var touchHelper: TouchHelper? = null
     private var rawDrawingWanted = false
+    private var excludeRects: List<Rect> = emptyList()
 
     /** True once the SDK has delivered any raw callback: the pen pipeline works.
      *  Written from the SDK's reader thread, read on the UI thread. */
@@ -62,9 +110,125 @@ class InkCanvasView @JvmOverloads constructor(
      *  is present but inert (wrong firmware, etc.) — stop trusting it. */
     private var rawAbandoned = false
 
-    val isEmpty: Boolean get() = strokes.isEmpty()
+    /** Anything written that has not been sent (or failed) yet, on any page? */
+    val hasFresh: Boolean
+        get() = pages.any { page -> page.strokes.any { it.state == State.FRESH } }
 
     var onStrokesChanged: (() -> Unit)? = null
+    var onPageChanged: (() -> Unit)? = null
+
+    // ------------------------------------------------------------- batches
+
+    /** Snapshot all fresh ink for sending, one batch per page so a send never
+     *  mixes strokes from different pages into one image. */
+    fun beginPendingBatches(): List<PendingBatch> {
+        val batches = mutableListOf<PendingBatch>()
+        for (page in pages) {
+            val fresh = page.strokes.filter { it.state == State.FRESH }
+            if (fresh.isEmpty()) continue
+            fresh.forEach { it.state = State.PENDING }
+            val id = nextBatchId++
+            pendingBatches[id] = PageBatch(page, fresh)
+            batches.add(PendingBatch(id, strokesAsJson(fresh)))
+        }
+        return batches
+    }
+
+    /** The batch became a basket entry: its ink disappears from its page. */
+    fun commitPending(batchId: Int) {
+        val batch = pendingBatches.remove(batchId) ?: return
+        val gone = batch.strokes.toHashSet()
+        batch.page.strokes.removeAll { it in gone }
+        pruneHighlights(batch.page)
+        collapseIfEmpty(batch.page)
+        rebuildBitmap()
+        refreshFromBitmap()
+    }
+
+    /** The server could not parse the batch: keep the ink and frame the
+     *  region it flagged (falling back to the batch's own bounds) so the
+     *  writer knows to rub it out and retry. */
+    fun failPending(batchId: Int, region: RectF?) {
+        val batch = pendingBatches.remove(batchId) ?: return
+        // Strokes erased while the request was in flight no longer count.
+        val alive = batch.strokes.filter { it in batch.page.strokes }
+        alive.forEach { it.state = State.FAILED }
+        if (alive.isNotEmpty()) {
+            val rect = RectF(region ?: boundsOf(alive))
+            rect.inset(-HIGHLIGHT_PADDING, -HIGHLIGHT_PADDING)
+            batch.page.highlights.add(Highlight(rect, alive))
+        }
+        refreshFromBitmap()
+    }
+
+    /** Sending failed (offline etc.): the ink rejoins the next send. */
+    fun releasePending(batchId: Int) {
+        val batch = pendingBatches.remove(batchId) ?: return
+        batch.strokes.forEach { if (it in batch.page.strokes) it.state = State.FRESH }
+        refreshFromBitmap()
+    }
+
+    // --------------------------------------------------------------- pages
+
+    val canGoLeft: Boolean get() = pageIndex > 0
+    val canGoRight: Boolean get() = pageIndex < pages.lastIndex || strokes.isNotEmpty()
+    val pageNumber: Int get() = pageIndex + 1
+    val pageCount: Int get() = pages.size
+
+    fun goLeft() {
+        if (canGoLeft) flipTo(pageIndex - 1)
+    }
+
+    /** Flipping right past the last page mints a new one — but only off a
+     *  page that has ink, so blank pages can't be stacked up. */
+    fun goRight() {
+        if (!canGoRight) return
+        if (pageIndex == pages.lastIndex) pages.add(Page())
+        flipTo(pageIndex + 1)
+    }
+
+    private fun flipTo(newIndex: Int) {
+        var target = newIndex
+        // Pages exist only where ink is: leaving an empty one drops it.
+        if (strokes.isEmpty() && pages.size > 1) {
+            pages.removeAt(pageIndex)
+            if (target > pageIndex) target--
+        }
+        pageIndex = target.coerceIn(0, pages.lastIndex)
+        rebuildBitmap()
+        refreshFromBitmap()
+        onPageChanged?.invoke()
+    }
+
+    /** A non-current page whose ink has all been committed vanishes. */
+    private fun collapseIfEmpty(page: Page) {
+        if (page.strokes.isNotEmpty()) return
+        val idx = pages.indexOf(page)
+        if (idx == -1 || idx == pageIndex || pages.size == 1) return
+        pages.removeAt(idx)
+        if (idx < pageIndex) pageIndex--
+        onPageChanged?.invoke()
+    }
+
+    private fun boundsOf(batch: List<Stroke>): RectF {
+        val rect = RectF()
+        var first = true
+        for (stroke in batch) for (p in stroke.points) {
+            if (first) {
+                rect.set(p.x, p.y, p.x, p.y)
+                first = false
+            } else {
+                rect.union(p.x, p.y)
+            }
+        }
+        return rect
+    }
+
+    /** Drop highlights whose ink has been fully erased. */
+    private fun pruneHighlights(page: Page) {
+        val live = page.strokes.toHashSet()
+        page.highlights.removeAll { h -> h.strokes.none { it in live } }
+    }
 
     // ---------------------------------------------------------------- BOOX
 
@@ -88,13 +252,15 @@ class InkCanvasView @JvmOverloads constructor(
             Log.d(TAG, "onRawDrawingTouchPointListReceived: ${points.points.size} points")
             // The full stroke arrives here at pen-up; prefer it over the
             // incremental moves, which can drop the first few samples.
-            val stroke = points.points
-                .map { Point(it.x, it.y, it.timestamp) }
-                .toMutableList()
-                .ifEmpty { pending ?: return }
+            val stroke = Stroke(
+                points.points
+                    .map { Point(it.x, it.y, it.timestamp) }
+                    .toMutableList()
+                    .ifEmpty { pending ?: return }
+            )
             pending = null
             strokes.add(stroke)
-            drawStrokeToBitmap(stroke)
+            drawStrokeToBitmap(stroke.points)
             // No invalidate(): the SDK already inked the e-ink layer, and a
             // view repaint here would wipe it mid-writing.
             post { onStrokesChanged?.invoke() }
@@ -134,7 +300,7 @@ class InkCanvasView @JvmOverloads constructor(
                 runCatching {
                     TouchHelper.create(this, rawInputCallback)
                         .setStrokeWidth(STROKE_WIDTH)
-                        .setLimitRect(Rect(0, 0, width, height), emptyList())
+                        .setLimitRect(Rect(0, 0, width, height), excludeRects)
                         .openRawDrawing()
                 }.onSuccess {
                     touchHelper = it
@@ -148,7 +314,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
             }
         } else if (helper != null) {
-            runCatching { helper.setLimitRect(Rect(0, 0, w, h), emptyList()) }
+            runCatching { helper.setLimitRect(Rect(0, 0, w, h), excludeRects) }
         }
     }
 
@@ -158,8 +324,18 @@ class InkCanvasView @JvmOverloads constructor(
         super.onDetachedFromWindow()
     }
 
-    /** Call from Activity.onResume/onPause: raw drawing must not stay on in
-     *  the background or the pen keeps inking over other apps. */
+    /** Areas the raw pen layer must leave alone (the icon toolbar). */
+    fun setExcludeRects(rects: List<Rect>) {
+        excludeRects = rects
+        val helper = touchHelper ?: return
+        if (width > 0 && height > 0) {
+            runCatching { helper.setLimitRect(Rect(0, 0, width, height), rects) }
+        }
+    }
+
+    /** Call from Activity.onResume/onPause and around any overlay UI: raw
+     *  drawing must not stay on while something sits above the canvas, or
+     *  the pen inks straight over it and view updates never hit the screen. */
     fun setActive(active: Boolean) {
         setRawDrawing(active)
         if (active) invalidate()
@@ -171,7 +347,8 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Repaint the view from the committed bitmap, temporarily dropping the
-     *  raw layer so stale SDK ink is cleared from the screen. */
+     *  raw layer so stale SDK ink is cleared from the screen. Also the only
+     *  way sibling views' updates reach the e-ink panel while raw is on. */
     private fun refreshFromBitmap() {
         val helper = touchHelper
         if (helper != null && rawDrawingWanted) {
@@ -182,6 +359,9 @@ class InkCanvasView @JvmOverloads constructor(
             invalidate()
         }
     }
+
+    /** Push pending sibling-view changes (status line) to the e-ink panel. */
+    fun flushDisplay() = refreshFromBitmap()
 
     // ------------------------------------------- stylus draws, finger erases
 
@@ -211,14 +391,14 @@ class InkCanvasView @JvmOverloads constructor(
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                strokes.add(mutableListOf(Point(event.x, event.y, event.eventTime)))
+                strokes.add(Stroke(mutableListOf(Point(event.x, event.y, event.eventTime))))
             }
             MotionEvent.ACTION_MOVE -> {
                 val stroke = strokes.lastOrNull() ?: return false
                 // Historical points carry the high-frequency samples between frames.
                 for (i in 0 until event.historySize) {
                     appendPoint(
-                        stroke,
+                        stroke.points,
                         Point(
                             event.getHistoricalX(i),
                             event.getHistoricalY(i),
@@ -226,7 +406,7 @@ class InkCanvasView @JvmOverloads constructor(
                         ),
                     )
                 }
-                appendPoint(stroke, Point(event.x, event.y, event.eventTime))
+                appendPoint(stroke.points, Point(event.x, event.y, event.eventTime))
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> onStrokesChanged?.invoke()
             else -> return false
@@ -265,7 +445,7 @@ class InkCanvasView @JvmOverloads constructor(
                 Log.w(TAG, "Raw pen layer inert; falling back to standard rendering")
                 rawAbandoned = true
                 setRawDrawing(false)
-                strokes.add(stroke)
+                strokes.add(Stroke(stroke))
                 drawStrokeToBitmap(stroke)
                 invalidate()
                 onStrokesChanged?.invoke()
@@ -309,13 +489,14 @@ class InkCanvasView @JvmOverloads constructor(
     private fun eraseNear(x: Float, y: Float) {
         val r2 = ERASE_RADIUS * ERASE_RADIUS
         val removed = strokes.removeAll { stroke ->
-            stroke.any { p ->
+            stroke.points.any { p ->
                 val dx = p.x - x
                 val dy = p.y - y
                 dx * dx + dy * dy <= r2
             }
         }
         if (removed) {
+            pruneHighlights(pages[pageIndex])
             rebuildBitmap()
             onStrokesChanged?.invoke()
         }
@@ -324,18 +505,16 @@ class InkCanvasView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         bitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
+        for (h in highlights) {
+            canvas.drawRoundRect(h.rect, HIGHLIGHT_RADIUS, HIGHLIGHT_RADIUS, highlightPaint)
+        }
     }
 
-    fun undo() {
-        if (strokes.isEmpty()) return
-        strokes.removeAt(strokes.size - 1)
-        rebuildBitmap()
-        refreshFromBitmap()
-        onStrokesChanged?.invoke()
-    }
-
+    /** Wipe the current page. In-flight batches settle harmlessly: their
+     *  strokes are gone, so commit and fail find nothing to act on. */
     fun clear() {
         strokes.clear()
+        highlights.clear()
         rebuildBitmap()
         refreshFromBitmap()
         onStrokesChanged?.invoke()
@@ -347,7 +526,7 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun redrawAllStrokes() {
-        for (stroke in strokes) drawStrokeToBitmap(stroke)
+        for (stroke in strokes) drawStrokeToBitmap(stroke.points)
     }
 
     private fun drawStrokeToBitmap(stroke: List<Point>) {
@@ -361,10 +540,10 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Strokes in the wire format expected by POST /ink. */
-    fun strokesAsJson(): JSONArray {
-        val startTime = strokes.firstOrNull()?.firstOrNull()?.t ?: 0L
-        return JSONArray(strokes.map { stroke ->
-            JSONArray(stroke.map { p ->
+    private fun strokesAsJson(batch: List<Stroke>): JSONArray {
+        val startTime = batch.firstOrNull()?.points?.firstOrNull()?.t ?: 0L
+        return JSONArray(batch.map { stroke ->
+            JSONArray(stroke.points.map { p ->
                 JSONObject()
                     .put("x", p.x)
                     .put("y", p.y)
@@ -379,6 +558,9 @@ class InkCanvasView @JvmOverloads constructor(
 
         // Finger-sized: erasing should be forgiving, not surgical.
         private const val ERASE_RADIUS = 40f
+
+        private const val HIGHLIGHT_PADDING = 18f
+        private const val HIGHLIGHT_RADIUS = 14f
 
         private val IS_BOOX = android.os.Build.MANUFACTURER.equals("ONYX", ignoreCase = true)
     }

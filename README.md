@@ -22,14 +22,19 @@ collected into a basket.
 
 ## The loop
 
-1. Write an item name on the tablet with the pen (a finger rubs strokes out),
-   tap **Done**.
-2. App posts the ink strokes to `POST /ink`.
-3. Server recognises the text, fuzzy-matches it against the item/alias table,
+1. Write an item name on the tablet with the pen (a finger rubs strokes out).
+   There is nothing to tap: after a 2 s writing pause the app posts the ink
+   to `POST /ink` automatically.
+2. Server recognises the text, fuzzy-matches it against the item/alias table,
    and appends a basket entry.
-4. App shows what was matched; canvas clears for the next item. Ambiguous
-   matches open a picker whose choice is learned as an alias; the **Basket**
-   button reviews and prunes the list.
+3. Matched ink vanishes from the page (that's the confirmation) and the
+   basket badge ticks up. Ambiguous matches open a picker whose choice is
+   learned as an alias. Ink the server can't parse stays on the page inside a
+   dashed highlight (from the server's `unparsed_regions` coordinates) —
+   rub it out and rewrite.
+4. The basket icon opens the list for review and pruning. Edge chevrons flip
+   between pages; a new page appears by flipping right off a written-on page,
+   and empty pages collapse away.
 
 ## Deployment
 

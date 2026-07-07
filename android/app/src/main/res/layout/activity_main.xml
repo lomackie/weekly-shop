@@ -1,62 +1,169 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:keepScreenOn="true"
     android:background="#FFFFFF">
 
     <com.weeklyshop.InkCanvasView
         android:id="@+id/ink_canvas"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_height="match_parent" />
 
-    <TextView
-        android:id="@+id/status_text"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="12dp"
-        android:textSize="20sp"
-        android:textColor="#000000"
-        android:text="@string/prompt" />
-
+    <!-- Floating icon toolbar; its bounds are excluded from the raw pen layer -->
     <LinearLayout
-        android:layout_width="match_parent"
+        android:id="@+id/toolbar"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="8dp">
+        android:layout_gravity="top|end"
+        android:layout_margin="8dp"
+        android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/basket_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:text="@string/basket" />
-
-        <Button
-            android:id="@+id/undo_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:text="@string/undo" />
-
-        <Button
+        <ImageButton
             android:id="@+id/clear_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:text="@string/clear" />
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@null"
+            android:contentDescription="@string/cd_clear"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_eraser" />
 
-        <Button
-            android:id="@+id/done_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/done" />
+        <FrameLayout
+            android:layout_width="56dp"
+            android:layout_height="56dp">
+
+            <ImageButton
+                android:id="@+id/basket_button"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:contentDescription="@string/cd_basket"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_basket" />
+
+            <TextView
+                android:id="@+id/basket_badge"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="top|end"
+                android:background="@drawable/bg_badge"
+                android:gravity="center"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
     </LinearLayout>
 
-</LinearLayout>
+    <!-- Page flips; the right chevron only shows once this page has ink -->
+    <ImageButton
+        android:id="@+id/page_left"
+        android:layout_width="48dp"
+        android:layout_height="72dp"
+        android:layout_gravity="center_vertical|start"
+        android:background="@null"
+        android:contentDescription="@string/cd_page_left"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_chevron_left"
+        android:visibility="invisible" />
+
+    <ImageButton
+        android:id="@+id/page_right"
+        android:layout_width="48dp"
+        android:layout_height="72dp"
+        android:layout_gravity="center_vertical|end"
+        android:background="@null"
+        android:contentDescription="@string/cd_page_right"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_chevron_right"
+        android:visibility="invisible" />
+
+    <TextView
+        android:id="@+id/page_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_margin="16dp"
+        android:textColor="#555555"
+        android:textSize="16sp"
+        android:visibility="gone" />
+
+    <!-- Last-event line: "✓ Semi Skimmed Milk" / "✕ …" / "⚠" -->
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:textColor="#555555"
+        android:textSize="16sp" />
+
+    <!-- Basket panel; opening it suspends the raw pen layer -->
+    <FrameLayout
+        android:id="@+id/basket_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CCFFFFFF"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/basket_panel"
+            android:layout_width="360dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="40dp"
+            android:background="@drawable/bg_panel"
+            android:clickable="true"
+            android:focusable="true"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_basket" />
+
+                <TextView
+                    android:id="@+id/basket_count"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:textColor="#000000"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <ImageButton
+                    android:id="@+id/basket_close"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@null"
+                    android:contentDescription="@string/cd_close"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_close" />
+            </LinearLayout>
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:id="@+id/basket_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+</FrameLayout>

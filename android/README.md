@@ -1,8 +1,10 @@
 # weekly-shop tablet app
 
 Kotlin app for the Onyx BOOX Note Air 2 Plus: a full-screen writing canvas.
-Write an item with the pen, tap **Done**, and the strokes go to the server,
-which replies with the matched item. Rub a stroke with a finger to erase it.
+Write an item with the pen and after a 2 s pause the strokes go to the server
+automatically — no submit button. Matched ink disappears from the page;
+unparsed ink stays behind inside a dashed highlight until a finger rubs it
+out.
 
 ## Setup
 
@@ -21,10 +23,31 @@ which replies with the matched item. Rub a stroke with a finger to erase it.
 ## Current state
 
 - **Interaction**: the stylus writes, a finger erases whole strokes — no mode
-  toggle. **Undo** removes the last stroke, **Clear** wipes the canvas,
-  **Basket** lists the basket (tap an entry to remove it), **Done** submits.
-- **Ambiguous matches** open a picker dialog; the choice is posted to
+  toggle, no submit button. Ink auto-sends after a 2 s pen-idle pause
+  (`MainActivity.IDLE_MS`); offline sends are retried every 8 s with the ink
+  kept on the page. Two icons: the **eraser** wipes the page, the **basket**
+  (with count badge) opens the basket panel. A small status line shows the
+  last event (`✓ item`, `✕ text`, `⚠` offline).
+- **Unparsed ink**: when the server returns `status=unmatched` nothing is
+  basketed; the ink stays put and the server's `unparsed_regions` bounding
+  box is drawn as a dashed rounded rect until the ink is rubbed out.
+- **Pages**: edge chevrons flip left/right (a finger swipe would fight the
+  finger-eraser, hence buttons). The right chevron appears only once the
+  current page has ink; flipping right past the last page creates the next
+  one — there is no add-page button. Pages left empty (or whose ink all got
+  matched away) collapse, so pages exist only where ink is. A `1/2`
+  indicator shows at the bottom centre when there is more than one page.
+- **Basket panel** is an in-app overlay (not a system dialog): opening it
+  suspends the raw pen layer so the pen can't ink over it and closing it
+  actually repaints — the old AlertDialog stayed on the e-ink because view
+  updates never flush while raw drawing is on. Rows delete with one tap on
+  their ✕, no confirmation.
+- **Ambiguous matches** open a picker dialog (raw pen layer suspended around
+  it for the same reason); the choice is posted to
   `POST /basket/{id}/resolve`, which also teaches the server the alias.
+- **Known trade-off**: a server reply flushes the e-ink display by toggling
+  the raw layer off/on for a frame; a stroke mid-flight at that exact moment
+  can lose its live ink preview (the recorded points are unaffected).
 - **BOOX Pen SDK** (`onyxsdk-pen`) is integrated behind a
   `Build.MANUFACTURER == "ONYX"` gate, with an adaptive fallback: if the raw
   pen pipeline never delivers callbacks, the stylus permanently falls back to

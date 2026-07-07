@@ -41,12 +41,24 @@ class ItemOut(BaseModel):
     score: float | None = None
 
 
+class Region(BaseModel):
+    """Bounding box in the tablet's stroke coordinate space."""
+
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+
 class InkResponse(BaseModel):
     raw_text: str
     status: str  # matched | ambiguous | unmatched
     item: ItemOut | None = None
     candidates: list[ItemOut] = Field(default_factory=list)
-    basket_entry_id: int
+    basket_entry_id: int | None = None
+    # Ink the server could not turn into an item; the tablet highlights these
+    # so the writer knows to rub out and retry.
+    unparsed_regions: list[Region] = Field(default_factory=list)
 
 
 class ItemIn(BaseModel):
@@ -61,6 +73,12 @@ class ResolveRequest(BaseModel):
 
 def _candidate_out(c: matching.Candidate) -> ItemOut:
     return ItemOut(id=c.item_id, name=c.name, ocado_id=c.ocado_id, score=c.score)
+
+
+def _strokes_region(strokes: list[list[InkPoint]]) -> Region:
+    xs = [p.x for stroke in strokes for p in stroke]
+    ys = [p.y for stroke in strokes for p in stroke]
+    return Region(left=min(xs), top=min(ys), right=max(xs), bottom=max(ys))
 
 
 @app.get("/health")
@@ -87,6 +105,16 @@ def submit_ink(body: InkRequest, request: Request) -> InkResponse:
     result = matching.match(
         conn, text, settings.match_threshold, settings.candidate_threshold
     )
+
+    if result.status == "unmatched":
+        # Nothing lands in the basket. Report where the failed ink sits so the
+        # tablet can highlight it; there is no real region detection yet, so
+        # the whole submission is flagged.
+        return InkResponse(
+            raw_text=text,
+            status=result.status,
+            unparsed_regions=[_strokes_region(body.strokes)] if body.strokes else [],
+        )
 
     item_id = result.best.item_id if result.best else None
     entry_id = db.add_basket_entry(conn, text, item_id, result.status)

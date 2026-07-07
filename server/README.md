@@ -34,11 +34,16 @@ Environment variables (or `server/.env`), all prefixed `WEEKLY_SHOP_`:
 
 - `POST /ink` — `{strokes: [[{x,y,t},…],…], image_base64?}`. Renders the
   strokes to PNG (unless an image is supplied), recognises, matches, and adds
-  a basket entry. Returns `{raw_text, status, item?, candidates, basket_entry_id}`
-  where `status` is `matched` / `ambiguous` / `unmatched`.
+  a basket entry. Returns `{raw_text, status, item?, candidates,
+  basket_entry_id?, unparsed_regions}` where `status` is `matched` /
+  `ambiguous` / `unmatched`. Unmatched ink is **not** basketed: instead
+  `unparsed_regions` carries bounding boxes (`{left, top, right, bottom}`, in
+  the tablet's stroke coordinate space) that the tablet highlights so the
+  writer knows to rub the ink out and retry. There is no real region
+  detection yet — the whole submission's bounding box is flagged.
 - `GET /basket`, `DELETE /basket/{id}`
-- `POST /basket/{id}/resolve` — `{item_id}`; fixes up an ambiguous/unmatched
-  entry and learns the raw text as an alias for that item.
+- `POST /basket/{id}/resolve` — `{item_id}`; fixes up an ambiguous entry and
+  learns the raw text as an alias for that item.
 - `GET /items`, `POST /items` — `{name, ocado_id, aliases?}`
 - `GET /health`
 

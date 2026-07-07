@@ -23,6 +23,20 @@ def client(monkeypatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture
+def picky_client(monkeypatch):
+    """A client whose match threshold nothing can reach: every recognisable
+    text comes back ambiguous, which is how ambiguous entries are minted."""
+    monkeypatch.setenv("WEEKLY_SHOP_MATCH_THRESHOLD", "101")
+    get_settings.cache_clear()
+    monkeypatch.setenv("WEEKLY_SHOP_DB_PATH", ":memory:")
+    monkeypatch.setenv("WEEKLY_SHOP_RECOGNIZER", "stub")
+    monkeypatch.setenv("WEEKLY_SHOP_STUB_TEXT", "milk")
+    with TestClient(app) as client:
+        yield client
+    get_settings.cache_clear()
+
+
 def seed_milk(client) -> int:
     resp = client.post(
         "/items",
@@ -47,25 +61,39 @@ def test_ink_to_basket_round_trip(client):
     assert basket[0]["item_id"] == item_id
 
 
-def test_unmatched_ink_still_lands_in_basket(client):
+def test_unmatched_ink_returns_region_and_skips_basket(client):
     resp = client.post("/ink", json=STROKES)  # no items seeded
     body = resp.json()
     assert body["status"] == "unmatched"
     assert body["item"] is None
+    assert body["basket_entry_id"] is None
+    # Stub detection: the whole submission's bounding box is flagged.
+    assert body["unparsed_regions"] == [
+        {"left": 0.0, "top": 0.0, "right": 12.0, "bottom": 10.0}
+    ]
 
-    basket = client.get("/basket").json()
-    assert basket[0]["status"] == "unmatched"
+    assert client.get("/basket").json() == []
 
 
-def test_resolve_unmatched_entry_learns_alias(client):
-    resp = client.post("/ink", json=STROKES)
-    entry_id = resp.json()["basket_entry_id"]
-    item_id = seed_milk(client)
+def test_matched_ink_has_no_unparsed_regions(client):
+    seed_milk(client)
+    body = client.post("/ink", json=STROKES).json()
+    assert body["status"] == "matched"
+    assert body["unparsed_regions"] == []
 
-    resp = client.post(f"/basket/{entry_id}/resolve", json={"item_id": item_id})
+
+def test_resolve_ambiguous_entry_learns_alias(picky_client):
+    item_id = seed_milk(picky_client)
+
+    body = picky_client.post("/ink", json=STROKES).json()
+    assert body["status"] == "ambiguous"
+    assert [c["id"] for c in body["candidates"]] == [item_id]
+    entry_id = body["basket_entry_id"]
+
+    resp = picky_client.post(f"/basket/{entry_id}/resolve", json={"item_id": item_id})
     assert resp.status_code == 200
 
-    basket = client.get("/basket").json()
+    basket = picky_client.get("/basket").json()
     assert basket[0]["status"] == "matched"
     assert basket[0]["item_id"] == item_id
 
