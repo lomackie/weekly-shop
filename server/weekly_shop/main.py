@@ -1,6 +1,8 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -8,6 +10,7 @@ from pydantic import BaseModel, Field
 from . import db, matching
 from .config import get_settings
 from .ink import render_strokes, segment_lines
+from .ocado import OcadoService
 from .recognition import build_recognizer
 
 
@@ -17,7 +20,10 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.conn = db.connect(settings.db_path)
     app.state.recognizer = build_recognizer(settings)
+    # Lazy: no browser is launched until the first Ocado call.
+    app.state.ocado = OcadoService(Path(settings.ocado_state_path))
     yield
+    app.state.ocado.close()
     app.state.conn.close()
 
 
@@ -62,11 +68,34 @@ class InkResponse(BaseModel):
 class ItemIn(BaseModel):
     name: str
     ocado_id: str
+    ocado_uuid: str | None = None
     aliases: list[str] = Field(default_factory=list)
+
+
+class ItemUpdate(BaseModel):
+    name: str | None = None
+    ocado_id: str | None = None
+    ocado_uuid: str | None = None
+
+
+class AliasIn(BaseModel):
+    alias: str
 
 
 class ResolveRequest(BaseModel):
     item_id: int
+
+
+class ProductOut(BaseModel):
+    product_id: str
+    sku: str
+    name: str
+    brand: str
+    pack_size: str
+    price: str
+    available: bool
+    sponsored: bool
+    quantity_in_basket: int
 
 
 def _candidate_out(c: matching.Candidate) -> ItemOut:
@@ -179,13 +208,125 @@ def delete_entry(entry_id: int, request: Request) -> dict:
 
 @app.get("/items")
 def get_items(request: Request) -> list[dict]:
-    rows = request.app.state.conn.execute("SELECT * FROM items ORDER BY name")
-    return [dict(row) for row in rows]
+    return db.list_items(request.app.state.conn)
 
 
 @app.post("/items", status_code=201)
 def create_item(body: ItemIn, request: Request) -> dict:
     item_id = db.add_item(
-        request.app.state.conn, body.name, body.ocado_id, body.aliases
+        request.app.state.conn,
+        body.name,
+        body.ocado_id,
+        body.aliases,
+        ocado_uuid=body.ocado_uuid,
     )
     return {"id": item_id}
+
+
+@app.put("/items/{item_id}")
+def update_item(item_id: int, body: ItemUpdate, request: Request) -> dict:
+    ok = db.update_item(
+        request.app.state.conn,
+        item_id,
+        name=body.name,
+        ocado_id=body.ocado_id,
+        ocado_uuid=body.ocado_uuid,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="unknown item")
+    return {"ok": True}
+
+
+@app.delete("/items/{item_id}")
+def delete_item(item_id: int, request: Request) -> dict:
+    if not db.delete_item(request.app.state.conn, item_id):
+        raise HTTPException(status_code=404, detail="unknown item")
+    return {"ok": True}
+
+
+@app.post("/items/{item_id}/aliases", status_code=201)
+def create_alias(item_id: int, body: AliasIn, request: Request) -> dict:
+    conn = request.app.state.conn
+    if db.get_item(conn, item_id) is None:
+        raise HTTPException(status_code=404, detail="unknown item")
+    db.add_alias(conn, body.alias, item_id)
+    return {"ok": True}
+
+
+@app.delete("/aliases/{alias_id}")
+def delete_alias(alias_id: int, request: Request) -> dict:
+    if not db.delete_alias(request.app.state.conn, alias_id):
+        raise HTTPException(status_code=404, detail="unknown alias")
+    return {"ok": True}
+
+
+@app.get("/ocado/search")
+def ocado_search(q: str, request: Request) -> list[ProductOut]:
+    try:
+        products = request.app.state.ocado.search(q)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    # Sponsored tiles repeat products that also appear organically; keep one
+    # entry per product and prefer the organic copy.
+    best: dict[str, ProductOut] = {}
+    for p in products:
+        out = ProductOut(**asdict(p))
+        current = best.get(out.product_id)
+        if current is None or (current.sponsored and not out.sponsored):
+            best[out.product_id] = out
+    return list(best.values())
+
+
+@app.post("/ocado/submit")
+def ocado_submit(request: Request) -> dict:
+    """Push all matched, not-yet-submitted basket entries to the real trolley."""
+    conn = request.app.state.conn
+    ocado = request.app.state.ocado
+
+    # Several entries of the same item (milk written twice) become one
+    # quantity bump, since apply-quantity takes a delta.
+    by_item: dict[int, dict] = {}
+    for row in db.unsubmitted_matched(conn):
+        group = by_item.setdefault(
+            row["item_id"],
+            {
+                "name": row["name"],
+                "ocado_id": row["ocado_id"],
+                "ocado_uuid": row["ocado_uuid"],
+                "entry_ids": [],
+            },
+        )
+        group["entry_ids"].append(row["id"])
+
+    pushed, failed = [], []
+    for item_id, group in by_item.items():
+        try:
+            uuid = group["ocado_uuid"]
+            if not uuid:
+                uuid = _resolve_product_uuid(ocado, group["name"], group["ocado_id"])
+                db.update_item(conn, item_id, ocado_uuid=uuid)
+            ocado.change_quantity(uuid, len(group["entry_ids"]))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except Exception as exc:
+            failed.append({"name": group["name"], "error": str(exc)})
+            continue
+        db.mark_submitted(conn, group["entry_ids"])
+        pushed.append({"name": group["name"], "quantity": len(group["entry_ids"])})
+
+    return {
+        "submitted_entries": sum(p["quantity"] for p in pushed),
+        "items": pushed,
+        "failed": failed,
+    }
+
+
+def _resolve_product_uuid(ocado, name: str, sku: str) -> str:
+    """Find the cart-API UUID for an item we only know by sku, via search."""
+    for product in ocado.search(name):
+        if product.sku == sku:
+            return product.product_id
+    raise LookupError(
+        f"no product with sku {sku} in search results for {name!r}; "
+        "re-pick the product in the control panel"
+    )

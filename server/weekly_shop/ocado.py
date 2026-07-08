@@ -30,8 +30,10 @@ import argparse
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, TypeVar
 
 from playwright.sync_api import Browser, BrowserContext, Error, Page, sync_playwright
 
@@ -197,6 +199,64 @@ class OcadoClient:
     def set_quantity(self, product_id: str, quantity: int) -> None:
         current = {line.product_id: line.quantity for line in self.cart()}
         self.change_quantity(product_id, quantity - current.get(product_id, 0))
+
+
+T = TypeVar("T")
+
+
+class OcadoService:
+    """Serialises all Ocado work onto one long-lived worker thread.
+
+    Sync-Playwright objects are bound to the thread that created them, and
+    FastAPI runs sync endpoints on a thread pool — so the browser lives on
+    this executor's single worker and every call is forwarded to it. The
+    client starts lazily on first use (startup costs a full page load) and
+    is rebuilt once if a call fails, in case the browser died or the page
+    session went stale.
+    """
+
+    def __init__(self, state_path: Path):
+        self._state_path = state_path
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocado")
+        self._client: OcadoClient | None = None
+
+    def _run(self, fn: Callable[[OcadoClient], T]) -> T:
+        def on_worker() -> T:
+            try:
+                if self._client is None:
+                    self._client = OcadoClient(self._state_path)
+                return fn(self._client)
+            except FileNotFoundError:
+                raise  # no session state; a retry can't help
+            except Exception:
+                if self._client is not None:
+                    try:
+                        self._client.close()
+                    except Exception:
+                        pass
+                    self._client = None
+                self._client = OcadoClient(self._state_path)
+                return fn(self._client)
+
+        return self._pool.submit(on_worker).result()
+
+    def search(self, term: str) -> list[Product]:
+        return self._run(lambda c: c.search(term))
+
+    def cart(self) -> list[CartLine]:
+        return self._run(lambda c: c.cart())
+
+    def change_quantity(self, product_id: str, delta: int) -> None:
+        self._run(lambda c: c.change_quantity(product_id, delta))
+
+    def close(self) -> None:
+        def on_worker() -> None:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
+
+        self._pool.submit(on_worker).result()
+        self._pool.shutdown()
 
 
 def login(state_path: Path) -> None:

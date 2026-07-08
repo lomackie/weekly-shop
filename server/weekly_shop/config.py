@@ -12,6 +12,10 @@ class Settings(BaseSettings):
 
     db_path: str = "weekly_shop.sqlite3"
 
+    # Playwright storage_state JSON holding the logged-in Ocado session;
+    # created with `python -m weekly_shop.ocado login` (headful, on a desktop).
+    ocado_state_path: str = "ocado_state.json"
+
     # "stub" needs no credentials and always recognises `stub_text`;
     # "claude" / "openai" send the rendered ink image to that provider's API;
     # "auto" picks openai, then claude, by whichever API key is configured,
