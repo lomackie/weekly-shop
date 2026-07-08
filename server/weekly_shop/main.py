@@ -5,6 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import db, matching
@@ -96,6 +97,7 @@ class ProductOut(BaseModel):
     available: bool
     sponsored: bool
     quantity_in_basket: int
+    image: str = ""
 
 
 def _candidate_out(c: matching.Candidate) -> ItemOut:
@@ -105,6 +107,11 @@ def _candidate_out(c: matching.Candidate) -> ItemOut:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/panel", response_class=HTMLResponse)
+def panel() -> str:
+    return (Path(__file__).parent / "static" / "panel.html").read_text()
 
 
 @app.post("/ink", response_model=InkResponse)

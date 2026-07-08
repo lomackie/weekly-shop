@@ -78,6 +78,7 @@ class Product:
     available: bool
     sponsored: bool
     quantity_in_basket: int
+    image: str = ""  # absolute URL of a product thumbnail
 
 
 @dataclass
@@ -170,6 +171,7 @@ class OcadoClient:
                         available=p.get("available", False),
                         sponsored=sponsored,
                         quantity_in_basket=p.get("quantityInBasket", 0),
+                        image=p.get("image", {}).get("src", ""),
                     )
                 )
         return products[:limit]

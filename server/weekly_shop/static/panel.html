@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>weekly shop</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>">
+<style>
+  :root {
+    --purple: #5c2d91;
+    --purple-soft: #ede7f6;
+    --ink: #1c1a21;
+    --muted: #766f80;
+    --line: #e5e1ec;
+    --bg: #faf9fc;
+    --card: #ffffff;
+    --good: #2e7d32;
+    --warn: #b26a00;
+    --bad: #c62828;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 22px; background: var(--card);
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 17px; margin: 0; color: var(--purple); flex: 1; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  button {
+    font: inherit; border: 1px solid var(--line); background: var(--card);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; color: var(--ink);
+  }
+  button:hover { border-color: var(--purple); color: var(--purple); }
+  button.primary {
+    background: var(--purple); border-color: var(--purple); color: #fff;
+  }
+  button.primary:hover { background: #4a2375; color: #fff; }
+  button.ghost {
+    border: none; background: none; padding: 2px 6px; color: var(--muted);
+  }
+  button.ghost:hover { color: var(--bad); }
+  main {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 22px;
+    padding: 22px; max-width: 1200px; margin: 0 auto;
+  }
+  @media (max-width: 880px) { main { grid-template-columns: 1fr; } }
+  section h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0 0 10px; display: flex; align-items: center;
+  }
+  section h2 .count { margin-left: 6px; }
+  section h2 .spacer { flex: 1; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  li.card.submitted { opacity: .55; }
+  .raw { font-weight: 600; }
+  .arrow { color: var(--muted); }
+  .itemname { color: var(--ink); }
+  .chip {
+    font-size: 12px; border-radius: 20px; padding: 2px 9px;
+    background: var(--purple-soft); color: var(--purple); white-space: nowrap;
+  }
+  .chip.matched { background: #e8f5e9; color: var(--good); }
+  .chip.ambiguous { background: #fff3e0; color: var(--warn); }
+  .chip.unmatched { background: #ffebee; color: var(--bad); }
+  .chip.sku { background: var(--bg); color: var(--muted); }
+  .grow { flex: 1; }
+  .aliases { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .alias {
+    font-size: 12px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 20px; padding: 1px 8px; color: var(--muted);
+  }
+  .alias button { border: none; background: none; padding: 0 0 0 4px;
+    color: var(--muted); cursor: pointer; font-size: 12px; }
+  .alias button:hover { color: var(--bad); }
+  .aliases input {
+    font: inherit; font-size: 12px; width: 90px; border: 1px dashed var(--line);
+    border-radius: 20px; padding: 1px 8px; background: none; color: var(--ink);
+  }
+  .aliases input:focus { outline: none; border-color: var(--purple); }
+  .empty { color: var(--muted); padding: 18px 4px; }
+  dialog {
+    border: none; border-radius: 14px; padding: 0; width: min(560px, 92vw);
+    max-height: 82vh; box-shadow: 0 18px 50px rgba(28,26,33,.25);
+  }
+  dialog::backdrop { background: rgba(28,26,33,.35); }
+  .picker { display: flex; flex-direction: column; max-height: 82vh; }
+  .picker-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  .picker-head h3 { margin: 0 0 10px; font-size: 15px; }
+  .picker-head input {
+    font: inherit; width: 100%; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .picker-head input:focus { outline: none; border-color: var(--purple); }
+  .picker-results { overflow-y: auto; padding: 6px; }
+  .picker-note { color: var(--muted); padding: 14px 16px; }
+  .product {
+    display: flex; gap: 12px; align-items: center; width: 100%;
+    border: none; background: none; text-align: left; padding: 8px 10px;
+    border-radius: 10px; cursor: pointer;
+  }
+  .product:hover { background: var(--purple-soft); }
+  .product img { width: 44px; height: 44px; object-fit: contain;
+    border-radius: 6px; background: #fff; border: 1px solid var(--line); }
+  .product .pname { flex: 1; }
+  .product .pmeta { color: var(--muted); font-size: 12px; }
+  .product .pprice { font-weight: 600; white-space: nowrap; }
+  .product.unavailable { opacity: .45; }
+  .existing { border-top: 1px solid var(--line); padding: 8px 6px; }
+  .existing h4 { margin: 4px 10px 6px; font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; }
+  #toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: #fff; border-radius: 10px;
+    padding: 10px 18px; opacity: 0; transition: opacity .25s; z-index: 20;
+    max-width: 80vw;
+  }
+  #toast.show { opacity: 1; }
+  #toast.error { background: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>weekly shop <span>control panel</span></h1>
+  <button id="refresh">Refresh</button>
+  <button id="submit" class="primary">Send to Ocado</button>
+</header>
+<main>
+  <section>
+    <h2>Basket <span class="count chip" id="basket-count"></span>
+        <span class="spacer"></span></h2>
+    <ul id="basket"></ul>
+  </section>
+  <section>
+    <h2>Items <span class="count chip" id="items-count"></span>
+        <span class="spacer"></span>
+        <button id="add-item">+ New item</button></h2>
+    <ul id="items"></ul>
+  </section>
+</main>
+
+<dialog id="picker">
+  <div class="picker">
+    <div class="picker-head">
+      <h3 id="picker-title">Pick a product</h3>
+      <input id="picker-search" placeholder="Search Ocado…" autocomplete="off">
+    </div>
+    <div class="picker-results" id="picker-results">
+      <div class="picker-note">Type to search the Ocado catalogue.</div>
+    </div>
+    <div class="existing" id="picker-existing" hidden>
+      <h4>Or one of your items</h4>
+      <div id="picker-existing-list"></div>
+    </div>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+let basket = [], items = [];
+
+async function api(path, opts = {}) {
+  const resp = await fetch(path, {
+    headers: { 'content-type': 'application/json' }, ...opts,
+  });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
+let toastTimer;
+function toast(msg, isError = false) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'show' + (isError ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, isError ? 6000 : 3500);
+}
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) node.setAttribute(k, v);
+  }
+  node.append(...children);
+  return node;
+}
+
+async function refresh() {
+  [basket, items] = await Promise.all([api('/basket'), api('/items')]);
+  renderBasket();
+  renderItems();
+}
+
+function renderBasket() {
+  const ul = $('#basket');
+  ul.replaceChildren();
+  const pending = basket.filter((b) => !b.submitted_at);
+  $('#basket-count').textContent =
+    `${pending.length} to send` + (basket.length > pending.length
+      ? ` · ${basket.length - pending.length} sent` : '');
+  if (!basket.length) {
+    ul.append(el('div', { class: 'empty' },
+      'Nothing yet — write on the tablet.'));
+    return;
+  }
+  for (const entry of [...basket].reverse()) {
+    const row = el('li', { class: 'card' + (entry.submitted_at ? ' submitted' : '') },
+      el('span', { class: 'raw' }, entry.raw_text));
+    if (entry.item_name) {
+      row.append(el('span', { class: 'arrow' }, '→'),
+        el('span', { class: 'itemname' }, entry.item_name));
+    }
+    row.append(el('span', { class: 'grow' }));
+    row.append(el('span', { class: `chip ${entry.status}` },
+      entry.submitted_at ? 'sent ✓' : entry.status));
+    if (entry.status !== 'matched') {
+      row.append(el('button', {
+        onclick: () => resolveEntry(entry),
+      }, 'Resolve'));
+    }
+    if (!entry.submitted_at) {
+      row.append(el('button', {
+        class: 'ghost', title: 'Delete entry',
+        onclick: async () => {
+          await api(`/basket/${entry.id}`, { method: 'DELETE' });
+          refresh();
+        },
+      }, '✕'));
+    }
+    ul.append(row);
+  }
+}
+
+function renderItems() {
+  const ul = $('#items');
+  ul.replaceChildren();
+  $('#items-count').textContent = String(items.length);
+  if (!items.length) {
+    ul.append(el('div', { class: 'empty' },
+      'No items yet — add one from Ocado search.'));
+    return;
+  }
+  for (const item of items) {
+    const aliases = el('span', { class: 'aliases' },
+      ...item.aliases.map((a) => el('span', { class: 'alias' }, a.alias,
+        el('button', {
+          title: 'Remove alias',
+          onclick: async () => {
+            await api(`/aliases/${a.id}`, { method: 'DELETE' });
+            refresh();
+          },
+        }, '✕'))),
+      el('input', {
+        placeholder: '+ alias',
+        onkeydown: async (ev) => {
+          if (ev.key !== 'Enter' || !ev.target.value.trim()) return;
+          await api(`/items/${item.id}/aliases`, {
+            method: 'POST',
+            body: JSON.stringify({ alias: ev.target.value.trim() }),
+          });
+          refresh();
+        },
+      }));
+    ul.append(el('li', { class: 'card' },
+      el('span', { class: 'itemname raw' }, item.name),
+      el('span', { class: 'chip sku' }, item.ocado_id),
+      el('span', { class: 'grow' }),
+      aliases,
+      el('button', {
+        title: 'Swap for a different Ocado product',
+        onclick: () => changeProduct(item),
+      }, 'Swap'),
+      el('button', {
+        class: 'ghost', title: 'Delete item',
+        onclick: async () => {
+          if (!confirm(`Delete "${item.name}" and its aliases?`)) return;
+          await api(`/items/${item.id}`, { method: 'DELETE' });
+          refresh();
+        },
+      }, '✕')));
+  }
+}
+
+/* ---- product picker ---- */
+
+let pickerHandler = null;
+let searchTimer = null;
+
+function openPicker(title, onPick, { existing = false, prefill = '' } = {}) {
+  pickerHandler = onPick;
+  $('#picker-title').textContent = title;
+  const input = $('#picker-search');
+  input.value = prefill;
+  $('#picker-results').replaceChildren(
+    el('div', { class: 'picker-note' }, 'Type to search the Ocado catalogue.'));
+  const existingBox = $('#picker-existing');
+  existingBox.hidden = !existing || !items.length;
+  if (!existingBox.hidden) {
+    $('#picker-existing-list').replaceChildren(...items.map((item) =>
+      el('button', {
+        class: 'product',
+        onclick: () => { $('#picker').close(); pickerHandler({ item }); },
+      },
+      el('span', { class: 'pname' }, item.name,
+        el('div', { class: 'pmeta' }, item.aliases.map((a) => a.alias).join(', '))))));
+  }
+  $('#picker').showModal();
+  input.focus();
+  if (prefill) runSearch(prefill);
+}
+
+async function runSearch(q) {
+  const box = $('#picker-results');
+  box.replaceChildren(el('div', { class: 'picker-note' }, 'Searching Ocado…'));
+  try {
+    const products = await api(`/ocado/search?q=${encodeURIComponent(q)}`);
+    if (!products.length) {
+      box.replaceChildren(el('div', { class: 'picker-note' }, 'No products found.'));
+      return;
+    }
+    box.replaceChildren(...products.map((p) =>
+      el('button', {
+        class: 'product' + (p.available ? '' : ' unavailable'),
+        onclick: () => { $('#picker').close(); pickerHandler({ product: p }); },
+      },
+      p.image ? el('img', { src: p.image, alt: '' }) : el('span'),
+      el('span', { class: 'pname' }, p.name,
+        el('div', { class: 'pmeta' },
+          `${p.pack_size}${p.available ? '' : ' · unavailable'}`)),
+      el('span', { class: 'pprice' }, `£${p.price}`))));
+  } catch (err) {
+    box.replaceChildren(el('div', { class: 'picker-note' }, String(err.message)));
+  }
+}
+
+$('#picker-search').addEventListener('input', (ev) => {
+  clearTimeout(searchTimer);
+  const q = ev.target.value.trim();
+  if (q.length < 2) return;
+  searchTimer = setTimeout(() => runSearch(q), 450);
+});
+$('#picker').addEventListener('click', (ev) => {
+  if (ev.target === $('#picker')) $('#picker').close();
+});
+
+/* ---- flows ---- */
+
+async function productToItem(product) {
+  // Reuse an existing item if this sku is already known.
+  const known = items.find((i) => i.ocado_id === product.sku);
+  if (known) return known.id;
+  const created = await api('/items', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: product.name,
+      ocado_id: product.sku,
+      ocado_uuid: product.product_id,
+    }),
+  });
+  return created.id;
+}
+
+function resolveEntry(entry) {
+  openPicker(`Match “${entry.raw_text}”`, async ({ product, item }) => {
+    try {
+      const itemId = item ? item.id : await productToItem(product);
+      await api(`/basket/${entry.id}/resolve`, {
+        method: 'POST', body: JSON.stringify({ item_id: itemId }),
+      });
+      toast(`“${entry.raw_text}” matched.`);
+      refresh();
+    } catch (err) { toast(err.message, true); }
+  }, { existing: true, prefill: entry.raw_text });
+}
+
+function changeProduct(item) {
+  openPicker(`Swap product for “${item.name}”`, async ({ product }) => {
+    try {
+      await api(`/items/${item.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: product.name,
+          ocado_id: product.sku,
+          ocado_uuid: product.product_id,
+        }),
+      });
+      toast(`Now buying ${product.name}.`);
+      refresh();
+    } catch (err) { toast(err.message, true); }
+  }, { prefill: item.name });
+}
+
+$('#add-item').addEventListener('click', () => {
+  openPicker('Add an item', async ({ product }) => {
+    try {
+      await productToItem(product);
+      toast(`${product.name} added — give it aliases so handwriting matches.`);
+      refresh();
+    } catch (err) { toast(err.message, true); }
+  });
+});
+
+$('#submit').addEventListener('click', async () => {
+  const btn = $('#submit');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const result = await api('/ocado/submit', { method: 'POST' });
+    if (!result.submitted_entries && !result.failed.length) {
+      toast('Nothing new to send.');
+    } else {
+      const sent = result.items
+        .map((i) => `${i.name} ×${i.quantity}`).join(', ');
+      if (result.failed.length) {
+        const bad = result.failed.map((f) => f.name).join(', ');
+        toast(`Sent: ${sent || 'nothing'}. Failed: ${bad}`, true);
+      } else {
+        toast(`In the trolley: ${sent}`);
+      }
+    }
+    refresh();
+  } catch (err) { toast(err.message, true); }
+  btn.disabled = false;
+  btn.textContent = 'Send to Ocado';
+});
+
+$('#refresh').addEventListener('click', refresh);
+setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+refresh().catch((err) => toast(err.message, true));
+</script>
+</body>
+</html>
