@@ -169,6 +169,8 @@
 const $ = (sel) => document.querySelector(sel);
 let basket = [], items = [];
 
+// Paths are relative to the page URL (/panel or <prefix>/panel behind a
+// reverse proxy), so the panel works from any mount point.
 async function api(path, opts = {}) {
   const resp = await fetch(path, {
     headers: { 'content-type': 'application/json' }, ...opts,
@@ -202,7 +204,7 @@ function el(tag, attrs = {}, ...children) {
 }
 
 async function refresh() {
-  [basket, items] = await Promise.all([api('/basket'), api('/items')]);
+  [basket, items] = await Promise.all([api('basket'), api('items')]);
   renderBasket();
   renderItems();
 }
@@ -238,7 +240,7 @@ function renderBasket() {
       row.append(el('button', {
         class: 'ghost', title: 'Delete entry',
         onclick: async () => {
-          await api(`/basket/${entry.id}`, { method: 'DELETE' });
+          await api(`basket/${entry.id}`, { method: 'DELETE' });
           refresh();
         },
       }, '✕'));
@@ -262,7 +264,7 @@ function renderItems() {
         el('button', {
           title: 'Remove alias',
           onclick: async () => {
-            await api(`/aliases/${a.id}`, { method: 'DELETE' });
+            await api(`aliases/${a.id}`, { method: 'DELETE' });
             refresh();
           },
         }, '✕'))),
@@ -270,7 +272,7 @@ function renderItems() {
         placeholder: '+ alias',
         onkeydown: async (ev) => {
           if (ev.key !== 'Enter' || !ev.target.value.trim()) return;
-          await api(`/items/${item.id}/aliases`, {
+          await api(`items/${item.id}/aliases`, {
             method: 'POST',
             body: JSON.stringify({ alias: ev.target.value.trim() }),
           });
@@ -290,7 +292,7 @@ function renderItems() {
         class: 'ghost', title: 'Delete item',
         onclick: async () => {
           if (!confirm(`Delete "${item.name}" and its aliases?`)) return;
-          await api(`/items/${item.id}`, { method: 'DELETE' });
+          await api(`items/${item.id}`, { method: 'DELETE' });
           refresh();
         },
       }, '✕')));
@@ -329,7 +331,7 @@ async function runSearch(q) {
   const box = $('#picker-results');
   box.replaceChildren(el('div', { class: 'picker-note' }, 'Searching Ocado…'));
   try {
-    const products = await api(`/ocado/search?q=${encodeURIComponent(q)}`);
+    const products = await api(`ocado/search?q=${encodeURIComponent(q)}`);
     if (!products.length) {
       box.replaceChildren(el('div', { class: 'picker-note' }, 'No products found.'));
       return;
@@ -365,7 +367,7 @@ async function productToItem(product) {
   // Reuse an existing item if this sku is already known.
   const known = items.find((i) => i.ocado_id === product.sku);
   if (known) return known.id;
-  const created = await api('/items', {
+  const created = await api('items', {
     method: 'POST',
     body: JSON.stringify({
       name: product.name,
@@ -380,7 +382,7 @@ function resolveEntry(entry) {
   openPicker(`Match “${entry.raw_text}”`, async ({ product, item }) => {
     try {
       const itemId = item ? item.id : await productToItem(product);
-      await api(`/basket/${entry.id}/resolve`, {
+      await api(`basket/${entry.id}/resolve`, {
         method: 'POST', body: JSON.stringify({ item_id: itemId }),
       });
       toast(`“${entry.raw_text}” matched.`);
@@ -392,7 +394,7 @@ function resolveEntry(entry) {
 function changeProduct(item) {
   openPicker(`Swap product for “${item.name}”`, async ({ product }) => {
     try {
-      await api(`/items/${item.id}`, {
+      await api(`items/${item.id}`, {
         method: 'PUT',
         body: JSON.stringify({
           name: product.name,
@@ -421,7 +423,7 @@ $('#submit').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
-    const result = await api('/ocado/submit', { method: 'POST' });
+    const result = await api('ocado/submit', { method: 'POST' });
     if (!result.submitted_entries && !result.failed.length) {
       toast('Nothing new to send.');
     } else {

@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from . import db, matching
@@ -107,6 +107,12 @@ def _candidate_out(c: matching.Candidate) -> ItemOut:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/")
+def root() -> RedirectResponse:
+    # Relative redirect so it also works behind a path-prefix reverse proxy.
+    return RedirectResponse(url="panel")
 
 
 @app.get("/panel", response_class=HTMLResponse)
